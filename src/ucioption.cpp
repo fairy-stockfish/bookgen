@@ -126,6 +126,13 @@ void init(OptionsMap& o) {
 
   o["Protocol"]              << Option("uci", {"uci", "usi", "ucci", "xboard"});
   o["Debug Log File"]        << Option("", on_logger);
+  o["MoveScoreRange"]        << Option(100, 0, 1000);
+  o["AbsScoreRange"]         << Option(100, 0, 1000);
+  o["AbsScoreBias"]          << Option(0, -1000, 1000);
+  o["DepthFactor"]           << Option(100, 0, 200);
+  o["AbsMoveScore"]          << Option(false);
+  o["TrimFEN"]               << Option(true);
+  o["EPDPath"]               << Option("book.epd");
   o["Contempt"]              << Option(24, -100, 100);
   o["Analysis Contempt"]     << Option("Both", {"Both", "Off", "White", "Black"});
   o["Threads"]               << Option(1, 1, 512, on_threads);

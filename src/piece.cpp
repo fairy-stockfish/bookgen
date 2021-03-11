@@ -1,6 +1,6 @@
 /*
   Fairy-Stockfish, a UCI chess variant playing engine derived from Stockfish
-  Copyright (C) 2018-2020 Fabian Fichter
+  Copyright (C) 2018-2021 Fabian Fichter
 
   Fairy-Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -112,7 +112,7 @@ namespace {
   }
   PieceInfo* fers_alfil_piece() {
       PieceInfo* p = fers_piece();
-      p->name = "fers_alfil";
+      p->name = "fersAlfil";
       p->betza = "FA";
       PieceInfo* p2 = alfil_piece();
       p->merge(p2);
@@ -179,49 +179,49 @@ namespace {
       PieceInfo* p = bishop_piece();
       p->name = "knibis";
       p->betza = "mNcB";
+      p->sliderQuiet.clear();
       PieceInfo* p2 = knight_piece();
+      p2->stepsCapture.clear();
       p->merge(p2);
       delete p2;
-      p->stepsCapture = {};
-      p->sliderQuiet = {};
       return p;
   }
   PieceInfo* biskni_piece() {
       PieceInfo* p = bishop_piece();
       p->name = "biskni";
       p->betza = "mBcN";
+      p->sliderCapture.clear();
       PieceInfo* p2 = knight_piece();
+      p2->stepsQuiet.clear();
       p->merge(p2);
       delete p2;
-      p->stepsQuiet = {};
-      p->sliderCapture = {};
       return p;
   }
   PieceInfo* kniroo_piece() {
       PieceInfo* p = rook_piece();
       p->name = "kniroo";
       p->betza = "mNcR";
+      p->sliderQuiet.clear();
       PieceInfo* p2 = knight_piece();
+      p2->stepsCapture.clear();
       p->merge(p2);
       delete p2;
-      p->stepsCapture = {};
-      p->sliderQuiet = {};
       return p;
   }
   PieceInfo* rookni_piece() {
       PieceInfo* p = rook_piece();
       p->name = "rookni";
       p->betza = "mRcN";
+      p->sliderCapture.clear();
       PieceInfo* p2 = knight_piece();
+      p2->stepsQuiet.clear();
       p->merge(p2);
       delete p2;
-      p->stepsQuiet = {};
-      p->sliderCapture = {};
       return p;
   }
   PieceInfo* shogi_pawn_piece() {
       PieceInfo* p = new PieceInfo();
-      p->name = "shogi_pawn";
+      p->name = "shogiPawn";
       p->betza = "fW";
       p->stepsQuiet = {NORTH};
       p->stepsCapture = {NORTH};
@@ -237,7 +237,7 @@ namespace {
   }
   PieceInfo* shogi_knight_piece() {
       PieceInfo* p = new PieceInfo();
-      p->name = "shogi_knight";
+      p->name = "shogiKnight";
       p->betza = "fN";
       p->stepsQuiet = {2 * NORTH + WEST, 2 * NORTH + EAST};
       p->stepsCapture = {2 * NORTH + WEST, 2 * NORTH + EAST};
@@ -245,7 +245,7 @@ namespace {
   }
   PieceInfo* euroshogi_knight_piece() {
       PieceInfo* p = shogi_knight_piece();
-      p->name = "euroshogi_knight";
+      p->name = "euroshogiKnight";
       p->betza = "fNsW";
       p->stepsQuiet.push_back(WEST);
       p->stepsQuiet.push_back(EAST);
@@ -263,7 +263,7 @@ namespace {
   }
   PieceInfo* dragon_horse_piece() {
       PieceInfo* p = bishop_piece();
-      p->name = "dragon_horse";
+      p->name = "dragonHorse";
       p->betza = "BW";
       PieceInfo* p2 = wazir_piece();
       p->merge(p2);
@@ -274,7 +274,7 @@ namespace {
       PieceInfo* p = wazir_piece();
       p->name = "clobber";
       p->betza = "cW";
-      p->stepsQuiet = {};
+      p->stepsQuiet.clear();
       return p;
   }
   PieceInfo* breakthrough_piece() {
@@ -290,6 +290,22 @@ namespace {
       p->name = "immobile";
       return p;
   }
+  PieceInfo* ataxx_piece() {
+      PieceInfo* p = new PieceInfo();
+      p->name = "ataxx";
+      p->betza = "mDNA";
+      p->stepsQuiet = {2 * NORTH_WEST, 2 * NORTH + WEST, 2 * NORTH, 2 * NORTH + EAST, 2 * NORTH_EAST,
+                       NORTH + 2 * WEST, NORTH + 2 * EAST, 2 * WEST, 2 * EAST, SOUTH + 2 * WEST, SOUTH + 2 * EAST,
+                       2 * SOUTH_WEST, 2 * SOUTH + WEST, 2 * SOUTH, 2 * SOUTH + EAST, 2 * SOUTH_EAST};
+      return p;
+  }
+  PieceInfo* quiet_queen_piece() {
+      PieceInfo* p = queen_piece();
+      p->name = "quietQueen";
+      p->betza = "mQ";
+      p->sliderCapture.clear();
+      return p;
+  }
   PieceInfo* cannon_piece() {
       PieceInfo* p = new PieceInfo();
       p->name = "cannon";
@@ -300,7 +316,7 @@ namespace {
   }
   PieceInfo* janggi_cannon_piece() {
       PieceInfo* p = new PieceInfo();
-      p->name = "janggi_cannon";
+      p->name = "janggiCannon";
       p->betza = "pR";
       p->hopperQuiet = {NORTH, EAST, SOUTH, WEST};
       p->hopperCapture = {NORTH, EAST, SOUTH, WEST};
@@ -330,8 +346,8 @@ namespace {
   }
   PieceInfo* janggi_elephant_piece() {
       PieceInfo* p = new PieceInfo();
-      p->name = "janggi_elephant";
-      p->betza = "nZ";
+      p->name = "janggiElephant";
+      p->betza = "mafsmafW";
       p->stepsQuiet = {SOUTH + 2 * SOUTH_WEST, SOUTH + 2 * SOUTH_EAST,
                        WEST  + 2 * SOUTH_WEST, EAST  + 2 * SOUTH_EAST,
                        WEST  + 2 * NORTH_WEST, EAST  + 2 * NORTH_EAST,
@@ -393,6 +409,8 @@ void PieceMap::init() {
   add(CLOBBER_PIECE, clobber_piece());
   add(BREAKTHROUGH_PIECE, breakthrough_piece());
   add(IMMOBILE_PIECE, immobile_piece());
+  add(ATAXX_PIECE, ataxx_piece());
+  add(QUIET_QUEEN, quiet_queen_piece());
   add(CANNON, cannon_piece());
   add(JANGGI_CANNON, janggi_cannon_piece());
   add(SOLDIER, soldier_piece());

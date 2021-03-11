@@ -29,12 +29,6 @@ startFen = r8r/1nbqkcabn1/pppppppppp/10/10/10/10/PPPPPPPPPP/1NBQKCABN1/R8R[] w -
 pieceDrops = true
 capturesToHand = true
 
-# Hybrid variant of Gothic-chess and crazyhouse, using Capablanca as a template
-[gothhouse:capablanca]
-startFen = rnbqckabnr/pppppppppp/10/10/10/10/PPPPPPPPPP/RNBQCKABNR[] w KQkq - 0 1
-pieceDrops = true
-capturesToHand = true
-
 # Shogun chess
 [shogun:crazyhouse]
 startFen = rnb+fkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB+FKBNR w KQkq - 0 1
@@ -52,10 +46,22 @@ firstRankPawnDrops = true
 promotionZonePawnDrops = true
 whiteDropRegion = *1 *2 *3 *4 *5
 blackDropRegion = *4 *5 *6 *7 *8
-immobilityIllegal = true"""
+immobilityIllegal = true
 
-print(ini_text, file=open("variants.ini", "w"))
-sf.set_option("VariantPath", "variants.ini")
+# Asymmetric variant with one army using pieces that move like knights but attack like other pieces (kniroo and knibis)
+[orda:chess]
+startFen = lhaykahl/8/pppppppp/8/8/8/PPPPPPPP/RNBQKBNR w KQ - 0 1
+centaur = h
+knibis = a
+kniroo = l
+silver = y
+promotionPieceTypes = qh
+flagPiece = k
+whiteFlag = *8
+blackFlag = *1
+"""
+
+sf.load_variant_config(ini_text)
 
 
 variant_positions = {
@@ -71,6 +77,7 @@ variant_positions = {
         "k7/b1b5/8/8/8/8/8/K7 w - - 0 1": (True, True),  # K vs KBB same color
         "kb6/8/8/8/8/8/8/K1B6 w - - 0 1": (True, True),  # KB vs KB same color
         "kb6/8/8/8/8/8/8/KB7 w - - 0 1": (False, False),  # KB vs KB opp color
+        "8/8/8/8/8/6KN/8/6nk w - - 0 1": (False, False),  # KN vs KN
     },
     "seirawan": {
         "k7/8/8/8/8/8/8/K7[] w - - 0 1": (True, True),  # K vs K
@@ -107,14 +114,21 @@ variant_positions = {
         "k9/10/10/10/10/10/10/10/10/KNE7 w - - 0 1": (False, True),  # KNE vs K
         "kb8/10/10/10/10/10/10/10/10/KE8 w - - 0 1": (False, False),  # KE vs KB opp color
         "kb8/10/10/10/10/10/10/10/10/K1E7 w - - 0 1": (True, True),  # KE vs KB same color
-    }
+    },
+    "orda": {
+        "k7/8/8/8/8/8/8/K7 w - - 0 1": (False, False),  # K vs K
+    },
 }
 
 
 class TestPyffish(unittest.TestCase):
+    def test_version(self):
+        result = sf.version()
+        self.assertEqual(result, (0, 0, 55))
+
     def test_info(self):
         result = sf.info()
-        self.assertEqual(result[:15], "Fairy-Stockfish")
+        self.assertTrue(result.startswith("Fairy-Stockfish"))
 
     def test_set_option(self):
         result = sf.set_option("UCI_Variant", "capablanca")
@@ -166,7 +180,7 @@ class TestPyffish(unittest.TestCase):
         legals = ['f5f4', 'a7a6', 'b7b6', 'c7c6', 'd7d6', 'e7e6', 'i7i6', 'j7j6', 'a7a5', 'b7b5', 'c7c5', 'e7e5', 'i7i5', 'j7j5', 'b8a6', 'b8c6', 'h6g4', 'h6i4', 'h6j5', 'h6f7', 'h6g8', 'h6i8', 'd5a2', 'd5b3', 'd5f3', 'd5c4', 'd5e4', 'd5c6', 'd5e6', 'd5f7', 'd5g8', 'j8g8', 'j8h8', 'j8i8', 'e8f7', 'c8b6', 'c8d6', 'g6g2', 'g6g3', 'g6f4', 'g6g4', 'g6h4', 'g6e5', 'g6g5', 'g6i5', 'g6a6', 'g6b6', 'g6c6', 'g6d6', 'g6e6', 'g6f6', 'g6h8', 'f8f7', 'f8g8', 'f8i8']
         moves = ['b2b4', 'f7f5', 'c2c3', 'g8d5', 'a2a4', 'h8g6', 'f2f3', 'i8h6', 'h2h3']
         result = sf.legal_moves("capablanca", CAPA, moves)
-        self.assertEqual(legals, result)
+        self.assertCountEqual(legals, result)
         self.assertIn("f8i8", result)
 
         moves = ['a2a4', 'f7f5', 'b2b3', 'g8d5', 'b1a3', 'i8h6', 'c1a2', 'h8g6', 'c2c4']
@@ -216,6 +230,43 @@ class TestPyffish(unittest.TestCase):
         result = sf.get_fen("makruk", fen, [], False, False, True)
         self.assertEqual(result, fen)
 
+        # makruk piece honor counting
+        fen = "8/3k4/8/2K1S1P1/8/8/8/8 w - - 0 1"
+        moves = ["g5g6m"]
+        result = sf.get_fen("makruk", fen, moves, False, False, True)
+        self.assertEqual(result, "8/3k4/6M~1/2K1S3/8/8/8/8 b - 88 8 1")
+
+        fen = "8/2K3k1/5m2/4S1S1/8/8/8/8 w - 128 97 1"
+        moves = ["e5f6"]
+        result = sf.get_fen("makruk", fen, moves, False, False, True)
+        self.assertEqual(result, "8/2K3k1/5S2/6S1/8/8/8/8 b - 44 8 1")
+
+        # makruk board honor counting
+        fen = "3k4/2m5/8/4MP2/3KS3/8/8/8 w - - 0 1"
+        moves = ["f5f6m"]
+        result = sf.get_fen("makruk", fen, moves, False, False, True)
+        self.assertEqual(result, "3k4/2m5/5M~2/4M3/3KS3/8/8/8 b - 128 0 1")
+
+        fen = "3k4/2m5/5M~2/4M3/3KS3/8/8/8 w - 128 0 33"
+        moves = ["d4d5"]
+        result = sf.get_fen("makruk", fen, moves, False, False, True)
+        self.assertEqual(result, "3k4/2m5/5M~2/3KM3/4S3/8/8/8 b - 128 1 33")
+
+        fen = "3k4/2m5/5M~2/4M3/3KS3/8/8/8 w - 128 36 1"
+        moves = ["d4d5"]
+        result = sf.get_fen("makruk", fen, moves, False, False, True)
+        self.assertEqual(result, "3k4/2m5/5M~2/3KM3/4S3/8/8/8 b - 128 37 1")
+
+        fen = "3k4/2m5/5M~2/4M3/3KS3/8/8/8 w - 128 0 33"
+        moves = ["d4d5"]
+        result = sf.get_fen("makruk", fen, moves, False, False, True, -1)
+        self.assertEqual(result, "3k4/2m5/5M~2/3KM3/4S3/8/8/8 b - 128 0 33")
+
+        fen = "3k4/2m5/5M~2/4M3/3KS3/8/8/8 w - 128 7 33"
+        moves = ["d4d5"]
+        result = sf.get_fen("makruk", fen, moves, False, False, True, 58)
+        self.assertEqual(result, "3k4/2m5/5M~2/3KM3/4S3/8/8/8 b - 128 8 33")
+
     def test_get_san(self):
         fen = "4k3/8/3R4/8/1R3R2/8/3R4/4K3 w - - 0 1"
         result = sf.get_san("chess", fen, "b4d4")
@@ -238,6 +289,10 @@ class TestPyffish(unittest.TestCase):
         result = sf.get_san("chess", fen, "c7b8q")
         self.assertEqual(result, "cxb8=Q+")
 
+        fen = "1r2k3/P1P5/8/8/8/8/8/4K3 w - - 0 1"
+        result = sf.get_san("chess", fen, "c7b8q", False, sf.NOTATION_LAN)
+        self.assertEqual(result, "c7xb8=Q+")
+
         result = sf.get_san("capablanca", CAPA, "e2e4")
         self.assertEqual(result, "e4")
 
@@ -258,14 +313,22 @@ class TestPyffish(unittest.TestCase):
         result = sf.get_san("sittuyin", fen, "h4h4f")
         self.assertEqual(result, "h4=F")
 
+        fen = "k7/2K3P1/8/4P3/8/8/8/1R6[] w - - 0 1"
+        result = sf.get_san("sittuyin", fen, "e5f6f")
+        self.assertEqual(result, "e5f6=F")
+
         result = sf.get_san("shogi", SHOGI, "i3i4")
-        self.assertEqual(result, "P-1f")
+        self.assertEqual(result, "P-16")
 
         result = sf.get_san("shogi", SHOGI, "i3i4", False, sf.NOTATION_SHOGI_HOSKING)
         self.assertEqual(result, "P16")
 
+        result = sf.get_san("shogi", SHOGI, "f1e2", False, sf.NOTATION_SHOGI_HOSKING)
+        self.assertEqual(result, "G49-58")
         result = sf.get_san("shogi", SHOGI, "f1e2", False, sf.NOTATION_SHOGI_HODGES)
         self.assertEqual(result, "G4i-5h")
+        result = sf.get_san("shogi", SHOGI, "f1e2", False, sf.NOTATION_SHOGI_HODGES_NUMBER)
+        self.assertEqual(result, "G49-58")
 
         fen = "lnsgkgsnl/1r5b1/pppppp1pp/6p2/9/2P6/PP1PPPPPP/1B5R1/LNSGKGSNL w -"
         result = sf.get_san("shogi", fen, "b2h8", False, sf.NOTATION_SHOGI_HODGES)
@@ -276,6 +339,8 @@ class TestPyffish(unittest.TestCase):
         fen = "lnsgkg1nl/1r5s1/pppppp1pp/6p2/9/2P6/PP1PPPPPP/7R1/LNSGKGSNL[Bb] w "
         result = sf.get_san("shogi", fen, "B@g7", False, sf.NOTATION_SHOGI_HODGES)
         self.assertEqual(result, "B*3c")
+        result = sf.get_san("shogi", fen, "B@g7", False, sf.NOTATION_SHOGI_HODGES_NUMBER)
+        self.assertEqual(result, "B*33")
 
         fen = "lnsgkg1nl/1r4s+B1/pppppp1pp/6p2/9/2P6/PP1PPPPPP/7R1/LNSGKGSNL[B] w "
         result = sf.get_san("shogi", fen, "h8g7", False, sf.NOTATION_SHOGI_HODGES)
@@ -320,15 +385,23 @@ class TestPyffish(unittest.TestCase):
         result = sf.get_san("xiangqi", fen, "e7d7", False, sf.NOTATION_XIANGQI_WXF)
         self.assertEqual(result, "15=6")
 
-        result = sf.get_san("janggi", JANGGI, "b1c3", False, sf.NOTATION_JANGGI)
-        self.assertEqual(result, "H02-83")
-
         fen = "1rb1ka2r/4a4/2ncb1nc1/p1p1p1p1p/9/2P6/P3PNP1P/2N1C2C1/9/R1BAKAB1R w - - 1 7"
         result = sf.get_san("xiangqi", fen, "c3e2")
         self.assertEqual(result, "Hce2")
 
         result = sf.get_san("xiangqi", fen, "c3d5")
         self.assertEqual(result, "Hd5")
+
+        result = sf.get_san("janggi", JANGGI, "b1c3", False, sf.NOTATION_JANGGI)
+        self.assertEqual(result, "H02-83")
+
+        fen = "1b1aa2b1/5k3/3ncn3/1pp1pp3/5r2p/9/P1PPB1PPB/2N1CCN1c/9/R2AKAR2 w - - 19 17"
+        result = sf.get_san("janggi", fen, "d1e2", False, sf.NOTATION_SAN)
+        self.assertEqual(result, "Ade2")
+
+        fen = "1Pbcka3/3nNn1c1/N2CaC3/1pB6/9/9/5P3/9/4K4/9 w - - 0 23"
+        result = sf.get_san("janggi", fen, "f8f10", False, sf.NOTATION_SAN)
+        self.assertEqual(result, "Cfxf10")
 
         fen = "rnsm1s1r/4n1k1/1ppppppp/p7/2PPP3/PP3PPP/4N2R/RNSKMS2 b - - 1 5"
         result = sf.get_san("makruk", fen, "f8f7")
@@ -370,20 +443,22 @@ class TestPyffish(unittest.TestCase):
     def test_get_san_moves(self):
         UCI_moves = ["e2e4", "e7e5", "g1f3", "b8c6h", "f1c4", "f8c5e"]
         SAN_moves = ["e4", "e5", "Nf3", "Nc6/H", "Bc4", "Bc5/E"]
-
         result = sf.get_san_moves("seirawan", SEIRAWAN, UCI_moves)
         self.assertEqual(result, SAN_moves)
 
         UCI_moves = ["c3c4", "g7g6", "b2h8"]
-        SAN_moves = ["P-7f", "P-3d", "Bx2b="]
-
+        SAN_moves = ["P-76", "P-34", "Bx22="]
         result = sf.get_san_moves("shogi", SHOGI, UCI_moves)
         self.assertEqual(result, SAN_moves)
 
         UCI_moves = ["h3e3", "h10g8", "h1g3", "c10e8", "a1a3", "i10h10"]
         SAN_moves = ["C2=5", "H8+7", "H2+3", "E3+5", "R9+2", "R9=8"]
-
         result = sf.get_san_moves("xiangqi", XIANGQI, UCI_moves, False, sf.NOTATION_XIANGQI_WXF)
+        self.assertEqual(result, SAN_moves)
+
+        UCI_moves = ["e2e4", "d7d5", "f1a6+", "d8d6"]
+        SAN_moves = ["e4", "d5", "Ba6=A", "Qd6"]
+        result = sf.get_san_moves("shogun", SHOGUN, UCI_moves)
         self.assertEqual(result, SAN_moves)
 
     def test_gives_check(self):
@@ -424,6 +499,11 @@ class TestPyffish(unittest.TestCase):
             for fen, expected_result in positions.items():
                 result = sf.has_insufficient_material(variant, fen, [])
                 self.assertEqual(result, expected_result, "{}: {}".format(variant, fen))
+
+    def test_validate_fen(self):
+        for variant, positions in variant_positions.items():
+            for fen in positions:
+                self.assertTrue(sf.validate_fen(fen, variant) == 1, "{}: {}".format(variant, fen))
 
 
 if __name__ == '__main__':

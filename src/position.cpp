@@ -307,7 +307,7 @@ Position& Position::set(const Variant* v, const string& fenStr, bool isChess960,
 
   // 2. Active color
   ss >> token;
-  sideToMove = (token == 'w' ? WHITE : BLACK);
+  sideToMove = (token == 'w' || token == 'r' ? WHITE : BLACK);
   // Invert side to move for SFEN
   if (sfen)
       sideToMove = ~sideToMove;
@@ -1498,6 +1498,7 @@ void Position::do_move(Move m, StateInfo& newSt, bool givesCheck) {
       {
           if (type_of(pc) == castling_king_piece() && file_of(to) == castling_king_file())
           {
+              st->castlingKingSquare[us] = to;
               Bitboard castling_rooks =  pieces(us, castling_rook_piece())
                                        & rank_bb(castling_rank(us))
                                        & (file_bb(FILE_A) | file_bb(max_file()));
@@ -1508,7 +1509,10 @@ void Position::do_move(Move m, StateInfo& newSt, bool givesCheck) {
           {
               if (   (file_of(to) == FILE_A || file_of(to) == max_file())
                   && piece_on(make_square(castling_king_file(), castling_rank(us))) == make_piece(us, castling_king_piece()))
+              {
+                  st->castlingKingSquare[us] = make_square(castling_king_file(), castling_rank(us));
                   set_castling_right(us, to);
+              }
           }
       }
   }

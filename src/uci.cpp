@@ -16,6 +16,7 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <cstdlib>
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -36,6 +37,8 @@
 #include "syzygy/tbprobe.h"
 
 using namespace std;
+
+namespace Stockfish {
 
 extern vector<string> setup_bench(const Position&, istream&);
 
@@ -399,13 +402,13 @@ namespace {
      // Coefficients of a 3rd order polynomial fit based on fishtest data
      // for two parameters needed to transform eval to the argument of a
      // logistic function.
-     double as[] = {-8.24404295, 64.23892342, -95.73056462, 153.86478679};
-     double bs[] = {-3.37154371, 28.44489198, -56.67657741,  72.05858751};
+     double as[] = {-3.68389304,  30.07065921, -60.52878723, 149.53378557};
+     double bs[] = {-2.0181857,   15.85685038, -29.83452023,  47.59078827};
      double a = (((as[0] * m + as[1]) * m + as[2]) * m) + as[3];
      double b = (((bs[0] * m + bs[1]) * m + bs[2]) * m) + bs[3];
 
      // Transform eval to centipawns with limited range
-     double x = std::clamp(double(100 * v) / PawnValueEg, -1000.0, 1000.0);
+     double x = std::clamp(double(100 * v) / PawnValueEg, -2000.0, 2000.0);
 
      // Return win rate in per mille (rounded to nearest)
      return int(0.5 + 1000 / (1 + std::exp((a - x) / b)));
@@ -417,18 +420,22 @@ namespace {
   void load(istringstream& is) {
 
     string token;
-    while (is >> token)
-        Options["VariantPath"] = token;
+    std::getline(is >> std::ws, token);
+    std::size_t end = token.find_last_not_of(' ');
+    if (end != std::string::npos)
+        Options["VariantPath"] = token.erase(end + 1);
   }
 
   // check() is called when engine receives the "check" command.
-  // The function reads variant configuration files and validates them.
+  // The function reads a variant configuration file and validates it.
 
   void check(istringstream& is) {
 
     string token;
-    while (is >> token)
-        variants.parse<true>(token);
+    std::getline(is >> std::ws, token);
+    std::size_t end = token.find_last_not_of(' ');
+    if (end != std::string::npos)
+        variants.parse<true>(token.erase(end + 1));
   }
 
 } // namespace
@@ -457,6 +464,19 @@ void UCI::loop(int argc, char* argv[]) {
   XBoard::stateMachine = new XBoard::StateMachine(pos, states);
   // UCCI banmoves state
   std::vector<Move> banmoves = {};
+
+  if (argc > 1 && (std::strcmp(argv[1], "noautoload") == 0))
+  {
+      cmd = "";
+      argc = 1;
+  }
+  else if (argc == 1 || !(std::strcmp(argv[1], "load") == 0))
+  {
+      // Check environment for variants.ini file
+      char *envVariantPath = std::getenv("FAIRY_STOCKFISH_VARIANT_PATH");
+      if (envVariantPath != NULL)
+          Options["VariantPath"] = std::string(envVariantPath);
+  }
 
   do {
       if (argc == 1 && !getline(cin, cmd)) // Block here waiting for input or EOF
@@ -527,6 +547,14 @@ void UCI::loop(int argc, char* argv[]) {
       else if (token == "d")        sync_cout << pos << sync_endl;
       else if (token == "eval")     trace_eval(pos);
       else if (token == "compiler") sync_cout << compiler_info() << sync_endl;
+      else if (token == "export_net")
+      {
+          std::optional<std::string> filename;
+          std::string f;
+          if (is >> skipws >> f)
+              filename = f;
+          Eval::NNUE::save_eval(filename);
+      }
       else if (token == "load")     { load(is); argc = 1; } // continue reading stdin
       else if (token == "check")    check(is);
       // UCI-Cyclone omits the "position" keyword
@@ -542,7 +570,7 @@ void UCI::loop(int argc, char* argv[]) {
           is.seekg(0);
           position(pos, is, states);
       }
-      else
+      else if (!token.empty() && token[0] != '#')
           sync_cout << "Unknown command: " << cmd << sync_endl;
 
   } while (token != "quit" && argc == 1); // Command line args are one-shot
@@ -653,7 +681,12 @@ string UCI::move(const Position& pos, Move m) {
   if (is_gating(m) && gating_square(m) == to)
       from = to_sq(m), to = from_sq(m);
   else if (type_of(m) == CASTLING && !pos.is_chess960())
+  {
       to = make_square(to > from ? pos.castling_kingside_file() : pos.castling_queenside_file(), rank_of(from));
+      // If the castling move is ambiguous with a normal king move, switch to 960 notation
+      if (pos.pseudo_legal(make_move(from, to)))
+          to = to_sq(m);
+  }
 
   string move = (type_of(m) == DROP ? UCI::dropped_piece(pos, m) + (Options["Protocol"] == "usi" ? '*' : '@')
                                     : UCI::square(pos, from)) + UCI::square(pos, to);
@@ -696,3 +729,5 @@ Move UCI::to_move(const Position& pos, string& str) {
 
   return MOVE_NONE;
 }
+
+} // namespace Stockfish

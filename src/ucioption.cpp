@@ -34,6 +34,8 @@
 
 using std::string;
 
+namespace Stockfish {
+
 UCI::OptionsMap Options; // Global object
 
 namespace PSQT {
@@ -49,6 +51,11 @@ std::set<string> standard_variants = {
     "capablanca", "gothic", "janus", "caparandom", "grand", "shogi", "xiangqi"
 };
 
+void init_variant(const Variant* v) {
+    pieceMap.init(v);
+    Bitboards::init_pieces();
+}
+
 /// 'On change' actions, triggered by an option's value change
 void on_clear_hash(const Option&) { Search::clear(); }
 void on_hash_size(const Option& o) { TT.resize(size_t(o)); }
@@ -59,12 +66,21 @@ void on_tb_path(const Option& o) { Tablebases::init(o); }
 void on_use_NNUE(const Option& ) { Eval::NNUE::init(); }
 void on_eval_file(const Option& ) { Eval::NNUE::init(); }
 
-void on_variant_path(const Option& o) { variants.parse<false>(o); Options["UCI_Variant"].set_combo(variants.get_keys()); }
+void on_variant_path(const Option& o) {
+    std::stringstream ss((std::string)o);
+    std::string path;
+
+    while (std::getline(ss, path, SepChar))
+        variants.parse<false>(path);
+
+    Options["UCI_Variant"].set_combo(variants.get_keys());
+}
 void on_variant_set(const Option &o) {
     // Re-initialize NNUE
     Eval::NNUE::init();
 
     const Variant* v = variants.find(o)->second;
+    init_variant(v);
     PSQT::init(v);
 }
 void on_variant_change(const Option &o) {
@@ -126,7 +142,7 @@ void on_variant_change(const Option &o) {
                 if (pt == PAWN && !v->firstRankPawnDrops)
                     suffix += "j";
                 else if (pt == v->dropNoDoubled)
-                    suffix += "f";
+                    suffix += std::string(v->dropNoDoubledCount, 'f');
                 else if (pt == BISHOP && v->dropOppositeColoredBishop)
                     suffix += "s";
                 suffix += "@" + std::to_string(pt == PAWN && !v->promotionZonePawnDrops ? v->promotionRank : v->maxRank + 1);
@@ -171,8 +187,6 @@ void init(OptionsMap& o) {
   o["AbsMoveScore"]          << Option(false);
   o["TrimFEN"]               << Option(false);
   o["EPDPath"]               << Option("book.epd");
-  o["Contempt"]              << Option(24, -100, 100);
-  o["Analysis Contempt"]     << Option("Both", {"Both", "Off", "White", "Black"});
   o["Threads"]               << Option(1, 1, 512, on_threads);
   o["Hash"]                  << Option(16, 1, MaxHashMB, on_hash_size);
   o["Clear Hash"]            << Option(on_clear_hash);
@@ -186,7 +200,7 @@ void init(OptionsMap& o) {
   o["UCI_Variant"]           << Option("chess", variants.get_keys(), on_variant_change);
   o["UCI_AnalyseMode"]       << Option(false);
   o["UCI_LimitStrength"]     << Option(false);
-  o["UCI_Elo"]               << Option(1350, 1350, 2850);
+  o["UCI_Elo"]               << Option(1350, 500, 2850);
   o["UCI_ShowWDL"]           << Option(false);
   o["SyzygyPath"]            << Option("<empty>", on_tb_path);
   o["SyzygyProbeDepth"]      << Option(1, 1, 100);
@@ -375,3 +389,5 @@ const std::string Option::get_type() const {
 }
 
 } // namespace UCI
+
+} // namespace Stockfish

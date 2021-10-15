@@ -20,6 +20,7 @@
 #include "variant.h"
 #include "apiutil.h"
 
+using namespace Stockfish;
 
 static PyObject* PyFFishError;
 
@@ -27,9 +28,9 @@ void buildPosition(Position& pos, StateListPtr& states, const char *variant, con
     states = StateListPtr(new std::deque<StateInfo>(1)); // Drop old and create a new one
 
     const Variant* v = variants.find(std::string(variant))->second;
+    UCI::init_variant(v);
     if (strcmp(fen, "startpos") == 0)
         fen = v->startFen.c_str();
-    Options["UCI_Chess960"] = chess960;
     pos.set(v, std::string(fen), chess960, &states->back(), Threads.main());
 
     // parse move list
@@ -53,11 +54,26 @@ void buildPosition(Position& pos, StateListPtr& states, const char *variant, con
 }
 
 extern "C" PyObject* pyffish_version(PyObject* self) {
-    return Py_BuildValue("(iii)", 0, 0, 55);
+    return Py_BuildValue("(iii)", 0, 0, 64);
 }
 
 extern "C" PyObject* pyffish_info(PyObject* self) {
     return Py_BuildValue("s", engine_info().c_str());
+}
+
+extern "C" PyObject* pyffish_variants(PyObject* self, PyObject *args) {
+    PyObject* varList = PyList_New(0);
+
+    for (std::string v : variants.get_keys())
+    {
+        PyObject* variant = Py_BuildValue("s", v.c_str());
+        PyList_Append(varList, variant);
+        Py_XDECREF(variant);
+    }
+
+    PyObject* Result = Py_BuildValue("O", varList);
+    Py_XDECREF(varList);
+    return Result;
 }
 
 // INPUT option name, option value
@@ -131,7 +147,7 @@ extern "C" PyObject* pyffish_getSAN(PyObject* self, PyObject *args) {
     std::string moveStr = move;
 
     Py_XDECREF(moveList);
-    return Py_BuildValue("s", move_to_san(pos, UCI::to_move(pos, moveStr), notation).c_str());
+    return Py_BuildValue("s", SAN::move_to_san(pos, UCI::to_move(pos, moveStr), notation).c_str());
 }
 
 // INPUT variant, fen, movelist
@@ -159,7 +175,7 @@ extern "C" PyObject* pyffish_getSANmoves(PyObject* self, PyObject *args) {
         if ((m = UCI::to_move(pos, moveStr)) != MOVE_NONE)
         {
             //add to the san move list
-            PyObject *move = Py_BuildValue("s", move_to_san(pos, m, notation).c_str());
+            PyObject *move = Py_BuildValue("s", SAN::move_to_san(pos, m, notation).c_str());
             PyList_Append(sanMoves, move);
             Py_XDECREF(move);
 
@@ -214,7 +230,6 @@ extern "C" PyObject* pyffish_getFEN(PyObject* self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "ssO!|pppi", &variant, &fen, &PyList_Type, &moveList, &chess960, &sfen, &showPromoted, &countStarted)) {
         return NULL;
     }
-    countStarted = std::min<unsigned int>(countStarted, INT_MAX); // pseudo-unsigned
 
     StateListPtr states(new std::deque<StateInfo>(1));
     buildPosition(pos, states, variant, fen, moveList, chess960);
@@ -288,7 +303,6 @@ extern "C" PyObject* pyffish_isOptionalGameEnd(PyObject* self, PyObject *args) {
     if (!PyArg_ParseTuple(args, "ssO!|pi", &variant, &fen, &PyList_Type, &moveList, &chess960, &countStarted)) {
         return NULL;
     }
-    countStarted = std::min<unsigned int>(countStarted, INT_MAX); // pseudo-unsigned
 
     StateListPtr states(new std::deque<StateInfo>(1));
     buildPosition(pos, states, variant, fen, moveList, chess960);
@@ -309,8 +323,8 @@ extern "C" PyObject* pyffish_hasInsufficientMaterial(PyObject* self, PyObject *a
     StateListPtr states(new std::deque<StateInfo>(1));
     buildPosition(pos, states, variant, fen, moveList, chess960);
 
-    bool wInsufficient = hasInsufficientMaterial(WHITE, pos);
-    bool bInsufficient = hasInsufficientMaterial(BLACK, pos);
+    bool wInsufficient = has_insufficient_material(WHITE, pos);
+    bool bInsufficient = has_insufficient_material(BLACK, pos);
 
     return Py_BuildValue("(OO)", wInsufficient ? Py_True : Py_False, bInsufficient ? Py_True : Py_False);
 }
@@ -318,17 +332,19 @@ extern "C" PyObject* pyffish_hasInsufficientMaterial(PyObject* self, PyObject *a
 // INPUT variant, fen
 extern "C" PyObject* pyffish_validateFen(PyObject* self, PyObject *args) {
     const char *fen, *variant;
-    if (!PyArg_ParseTuple(args, "ss", &fen, &variant)) {
+    int chess960 = false;
+    if (!PyArg_ParseTuple(args, "ss|p", &fen, &variant, &chess960)) {
         return NULL;
     }
 
-    return Py_BuildValue("i", fen::validate_fen(std::string(fen), variants.find(std::string(variant))->second));
+    return Py_BuildValue("i", FEN::validate_fen(std::string(fen), variants.find(std::string(variant))->second, chess960));
 }
 
 
 static PyMethodDef PyFFishMethods[] = {
     {"version", (PyCFunction)pyffish_version, METH_NOARGS, "Get package version."},
     {"info", (PyCFunction)pyffish_info, METH_NOARGS, "Get Stockfish version info."},
+    {"variants", (PyCFunction)pyffish_variants, METH_NOARGS, "Get supported variants."},
     {"set_option", (PyCFunction)pyffish_setOption, METH_VARARGS, "Set UCI option."},
     {"load_variant_config", (PyCFunction)pyffish_loadVariantConfig, METH_VARARGS, "Load variant configuration."},
     {"start_fen", (PyCFunction)pyffish_startFen, METH_VARARGS, "Get starting position FEN."},
@@ -378,6 +394,9 @@ PyMODINIT_FUNC PyInit_pyffish() {
     PyModule_AddObject(module, "NOTATION_SHOGI_HODGES_NUMBER", PyLong_FromLong(NOTATION_SHOGI_HODGES_NUMBER));
     PyModule_AddObject(module, "NOTATION_JANGGI", PyLong_FromLong(NOTATION_JANGGI));
     PyModule_AddObject(module, "NOTATION_XIANGQI_WXF", PyLong_FromLong(NOTATION_XIANGQI_WXF));
+
+    // validation
+    PyModule_AddObject(module, "FEN_OK", PyLong_FromLong(FEN::FEN_OK));
 
     // initialize stockfish
     pieceMap.init();

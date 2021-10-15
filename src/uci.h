@@ -25,9 +25,21 @@
 
 #include "types.h"
 
+#include "variant.h"
+
+namespace Stockfish {
+
 class Position;
 
 namespace UCI {
+
+#ifndef _WIN32
+  constexpr char SepChar = ':';
+#else
+  constexpr char SepChar = ';';
+#endif
+
+void init_variant(const Variant* v);
 
 class Option;
 
@@ -84,5 +96,7 @@ Move to_move(const Position& pos, std::string& str);
 } // namespace UCI
 
 extern UCI::OptionsMap Options;
+
+} // namespace Stockfish
 
 #endif // #ifndef UCI_H_INCLUDED

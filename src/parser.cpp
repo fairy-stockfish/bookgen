@@ -19,9 +19,12 @@
 #include <string>
 #include <sstream>
 
+#include "apiutil.h"
 #include "parser.h"
 #include "piece.h"
 #include "types.h"
+
+namespace Stockfish {
 
 namespace {
 
@@ -159,28 +162,56 @@ Variant* VariantParser<DoCheck>::parse() {
 template <bool DoCheck>
 Variant* VariantParser<DoCheck>::parse(Variant* v) {
     // piece types
-    for (const auto& pieceInfo : pieceMap)
+    for (PieceType pt = PAWN; pt <= KING; ++pt)
     {
         // piece char
-        const auto& keyValue = config.find(pieceInfo.second->name);
+        std::string name = piece_name(pt);
+
+        const auto& keyValue = config.find(name);
         if (keyValue != config.end() && !keyValue->second.empty())
         {
             if (isalpha(keyValue->second.at(0)))
-                v->add_piece(pieceInfo.first, keyValue->second.at(0));
+                v->add_piece(pt, keyValue->second.at(0));
             else
             {
                 if (DoCheck && keyValue->second.at(0) != '-')
-                    std::cerr << pieceInfo.second->name << " - Invalid letter: " << keyValue->second.at(0) << std::endl;
-                v->remove_piece(pieceInfo.first);
+                    std::cerr << name << " - Invalid letter: " << keyValue->second.at(0) << std::endl;
+                v->remove_piece(pt);
+            }
+            // betza
+            if (is_custom(pt))
+            {
+                if (keyValue->second.size() > 1)
+                    v->customPiece[pt - CUSTOM_PIECES] = keyValue->second.substr(2);
+                else if (DoCheck)
+                    std::cerr << name << " - Missing Betza move notation" << std::endl;
             }
         }
         // mobility region
-        std::string capitalizedPiece = pieceInfo.second->name;
+        std::string capitalizedPiece = name;
         capitalizedPiece[0] = toupper(capitalizedPiece[0]);
         for (Color c : {WHITE, BLACK})
         {
             std::string color = c == WHITE ? "White" : "Black";
-            parse_attribute("mobilityRegion" + color + capitalizedPiece, v->mobilityRegion[c][pieceInfo.first]);
+            parse_attribute("mobilityRegion" + color + capitalizedPiece, v->mobilityRegion[c][pt]);
+        }
+    }
+    // piece values
+    for (Phase phase : {MG, EG})
+    {
+        const std::string optionName = phase == MG ? "pieceValueMg" : "pieceValueEg";
+        const auto& pv = config.find(optionName);
+        if (pv != config.end())
+        {
+            char token;
+            size_t idx = 0;
+            std::stringstream ss(pv->second);
+            while (!ss.eof() && ss >> token && (idx = v->pieceToChar.find(toupper(token))) != std::string::npos
+                             && ss >> token && ss >> v->pieceValue[phase][idx]) {}
+            if (DoCheck && idx == std::string::npos)
+                std::cerr << optionName << " - Invalid piece type: " << token << std::endl;
+            else if (DoCheck && !ss.eof())
+                std::cerr << optionName << " - Invalid piece value for type: " << v->pieceToChar[idx] << std::endl;
         }
     }
     parse_attribute("variantTemplate", v->variantTemplate);
@@ -270,6 +301,7 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("dropOppositeColoredBishop", v->dropOppositeColoredBishop);
     parse_attribute("dropPromoted", v->dropPromoted);
     parse_attribute("dropNoDoubled", v->dropNoDoubled, v->pieceToChar);
+    parse_attribute("dropNoDoubledCount", v->dropNoDoubledCount);
     parse_attribute("immobilityIllegal", v->immobilityIllegal);
     parse_attribute("gating", v->gating);
     parse_attribute("arrowGating", v->arrowGating);
@@ -332,29 +364,24 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     // Check consistency
     if (DoCheck)
     {
-        // startFen
-        std::string fenBoard = v->startFen.substr(0, v->startFen.find(' '));
-        std::stringstream ss(fenBoard);
-        char token;
-        ss >> std::noskipws;
-
-        while (ss >> token)
+        // pieces
+        for (PieceType pt : v->pieceTypes)
         {
-            if (token == '+')
-            {
-                ss >> token;
-                size_t idx = v->pieceToChar.find(toupper(token));
-                if (idx == std::string::npos || !v->promotedPieceType[idx])
-                    std::cerr << "startFen - Invalid piece type: +" << token << std::endl;
-            }
-            else if (isalpha(token) && v->pieceToChar.find(toupper(token)) == std::string::npos)
-                std::cerr << "startFen - Invalid piece type: " << token << std::endl;
+            for (Color c : {WHITE, BLACK})
+                if (std::count(v->pieceToChar.begin(), v->pieceToChar.end(), v->pieceToChar[make_piece(c, pt)]) != 1)
+                    std::cerr << piece_name(pt) << " - Ambiguous piece character: " << v->pieceToChar[make_piece(c, pt)] << std::endl;
         }
+
+        // startFen
+        if (FEN::validate_fen(v->startFen, v, v->chess960) != FEN::FEN_OK)
+            std::cerr << "startFen - Invalid starting position: " << v->startFen << std::endl;
 
         // pieceToCharTable
         if (v->pieceToCharTable != "-")
         {
-            ss = std::stringstream(v->pieceToCharTable);
+            const std::string fenBoard = v->startFen.substr(0, v->startFen.find(' '));
+            std::stringstream ss(v->pieceToCharTable);
+            char token;
             while (ss >> token)
                 if (isalpha(token) && v->pieceToChar.find(toupper(token)) == std::string::npos)
                     std::cerr << "pieceToCharTable - Invalid piece type: " << token << std::endl;
@@ -369,17 +396,37 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
             }
         }
 
+        // Contradictory options
+        if (!v->checking && v->checkCounting)
+            std::cerr << "checkCounting=true requires checking=true." << std::endl;
+        if (v->doubleStep && v->doubleStepRankMin > v->doubleStepRank)
+            std::cerr << "Inconsistent settings: doubleStepRankMin > doubleStepRank." << std::endl;
+        if (v->castling && v->castlingRank > v->maxRank)
+            std::cerr << "Inconsistent settings: castlingRank > maxRank." << std::endl;
+        if (v->castling && v->castlingQueensideFile > v->castlingKingsideFile)
+            std::cerr << "Inconsistent settings: castlingQueensideFile > castlingKingsideFile." << std::endl;
+
         // Check for limitations
 
         // Options incompatible with royal kings
         if (v->pieceTypes.find(KING) != v->pieceTypes.end())
         {
             if (v->blastOnCapture)
-                std::cerr << "Can not use kings with blastOnCapture" << std::endl;
+                std::cerr << "Can not use kings with blastOnCapture." << std::endl;
             if (v->flipEnclosedPieces)
-                std::cerr << "Can not use kings with flipEnclosedPieces" << std::endl;
+                std::cerr << "Can not use kings with flipEnclosedPieces." << std::endl;
+            // We can not fully check custom king movements at this point
+            if (!is_custom(v->kingType))
+            {
+                const PieceInfo* pi = pieceMap.find(v->kingType)->second;
+                if (   pi->hopper[MODALITY_QUIET].size()
+                    || pi->hopper[MODALITY_CAPTURE].size()
+                    || std::any_of(pi->steps[MODALITY_CAPTURE].begin(),
+                                pi->steps[MODALITY_CAPTURE].end(),
+                                [](const std::pair<const Direction, int>& d) { return d.second; }))
+                    std::cerr << piece_name(v->kingType) << " is not supported as kingType." << std::endl;
+            }
         }
-
     }
     return v;
 }
@@ -388,3 +435,5 @@ template Variant* VariantParser<true>::parse();
 template Variant* VariantParser<false>::parse();
 template Variant* VariantParser<true>::parse(Variant* v);
 template Variant* VariantParser<false>::parse(Variant* v);
+
+} // namespace Stockfish

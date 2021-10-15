@@ -20,12 +20,15 @@
 
 #include <algorithm> // For std::count
 #include "movegen.h"
+#include "partner.h"
 #include "search.h"
 #include "thread.h"
 #include "uci.h"
 #include "syzygy/tbprobe.h"
 #include "tt.h"
 #include "xboard.h"
+
+namespace Stockfish {
 
 ThreadPool Threads; // Global object
 
@@ -133,14 +136,16 @@ void Thread::idle_loop() {
 
 void ThreadPool::set(size_t requested) {
 
-  if (size() > 0) { // destroy any existing thread(s)
+  if (size() > 0)   // destroy any existing thread(s)
+  {
       main()->wait_for_search_finished();
 
       while (size() > 0)
           delete back(), pop_back();
   }
 
-  if (requested > 0) { // create new thread(s)
+  if (requested > 0)   // create new thread(s)
+  {
       push_back(new MainThread(0));
 
       while (size() < requested)
@@ -187,6 +192,23 @@ void ThreadPool::start_thinking(Position& pos, StateListPtr& states,
       if (   (limits.searchmoves.empty() || std::count(limits.searchmoves.begin(), limits.searchmoves.end(), m))
           && (limits.banmoves.empty() || !std::count(limits.banmoves.begin(), limits.banmoves.end(), m)))
           rootMoves.emplace_back(m);
+
+  // Add virtual drops
+  if (pos.two_boards() && Partner.opptime && limits.time[pos.side_to_move()] > Partner.opptime + 1000)
+  {
+      if (pos.checkers())
+      {
+          for (const auto& m : MoveList<EVASIONS>(pos))
+              if (pos.virtual_drop(m) && pos.legal(m))
+                  rootMoves.emplace_back(m);
+      }
+      else
+      {
+          for (const auto& m : MoveList<QUIETS>(pos))
+              if (pos.virtual_drop(m) && pos.legal(m))
+                  rootMoves.emplace_back(m);
+      }
+  }
 
   if (!rootMoves.empty())
       Tablebases::rank_root_moves(pos, rootMoves);
@@ -265,3 +287,5 @@ void ThreadPool::wait_for_search_finished() const {
         if (th != front())
             th->wait_for_search_finished();
 }
+
+} // namespace Stockfish

@@ -22,7 +22,10 @@
 #include <atomic>
 #include <sstream>
 
+#include "misc.h"
 #include "position.h"
+
+namespace Stockfish {
 
 /// PartnerHandler manages the communication with the partner
 /// in games played on two boards, such as bughouse.
@@ -41,11 +44,13 @@ struct PartnerHandler {
     void parse_ptell(std::istringstream& is, const Position& pos);
 
     std::atomic<bool> isFairy;
-    std::atomic<bool> fast, sitRequested, partnerDead, weDead, weWin;
-    std::atomic<int> time, opptime;
+    std::atomic<bool> fast, sitRequested, partnerDead, weDead, weWin, weVirtualWin, weVirtualLoss;
+    std::atomic<TimePoint> time, opptime;
     Move moveRequested;
 };
 
 extern PartnerHandler Partner;
+
+} // namespace Stockfish
 
 #endif // #ifndef PARTNER_H_INCLUDED

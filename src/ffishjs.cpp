@@ -40,6 +40,7 @@
 
 using namespace emscripten;
 
+using namespace Stockfish;
 
 void initialize_stockfish() {
   pieceMap.init();
@@ -117,7 +118,7 @@ public:
   std::string legal_moves_san() {
     std::string movesSan;
     for (const ExtMove& move : MoveList<LEGAL>(this->pos)) {
-      movesSan += move_to_san(this->pos, move, NOTATION_SAN);
+      movesSan += SAN::move_to_san(this->pos, move, NOTATION_SAN);
       movesSan += DELIM;
     }
     save_pop_back(movesSan);
@@ -145,7 +146,7 @@ public:
   bool push_san(std::string sanMove, Notation notation) {
     Move foundMove = MOVE_NONE;
     for (const ExtMove& move : MoveList<LEGAL>(pos)) {
-      if (sanMove == move_to_san(this->pos, move, notation)) {
+      if (sanMove == SAN::move_to_san(this->pos, move, notation)) {
         foundMove = move;
         break;
       }
@@ -174,13 +175,17 @@ public:
     return this->pos.fen();
   }
 
+  std::string fen(bool showPromoted, int countStarted) const {
+    return this->pos.fen(false, showPromoted, countStarted);
+  }
+
   void set_fen(std::string fen) {
     resetStates();
     moveStack.clear();
     pos.set(v, fen, is960, &states->back(), thread);
   }
 
-  // note: const identifier for pos not possible due to move_to_san()
+  // note: const identifier for pos not possible due to SAN::move_to_san()
   std::string san_move(std::string uciMove) {
     return san_move(uciMove, NOTATION_SAN);
   }
@@ -189,7 +194,7 @@ public:
     const Move move = UCI::to_move(this->pos, uciMove);
     if (is_move_none<true>(move, uciMove, pos))
       return "";
-    return move_to_san(this->pos, UCI::to_move(this->pos, uciMove), notation);
+    return SAN::move_to_san(this->pos, UCI::to_move(this->pos, uciMove), notation);
   }
 
   std::string variation_san(std::string uciMoves) {
@@ -222,7 +227,7 @@ public:
           else
           variationSan += "...";
         }
-        variationSan += move_to_san(this->pos, moves.back(), Notation(notation));
+        variationSan += SAN::move_to_san(this->pos, moves.back(), Notation(notation));
       }
       else {
         if (moveNumbers && pos.side_to_move() == WHITE) {
@@ -231,7 +236,7 @@ public:
           variationSan += ".";
         }
         variationSan += DELIM;
-        variationSan += move_to_san(this->pos, moves.back(), Notation(notation));
+        variationSan += SAN::move_to_san(this->pos, moves.back(), Notation(notation));
       }
       states->emplace_back();
       pos.do_move(moves.back(), states->back());
@@ -262,10 +267,61 @@ public:
     return pos.game_ply();
   }
 
+  bool has_insufficient_material(bool turn) const {
+    return Stockfish::has_insufficient_material(turn ? WHITE : BLACK, pos);
+  }
+
+  bool is_insufficient_material() const {
+    return Stockfish::has_insufficient_material(WHITE, pos) && Stockfish::has_insufficient_material(BLACK, pos);
+  }
+
   bool is_game_over() const {
-    for (const ExtMove& move: MoveList<LEGAL>(pos))
-      return false;
-    return true;
+    return is_game_over(false);
+  }
+
+  bool is_game_over(bool claim_draw) const {
+    if (is_insufficient_material())
+      return true;
+    if (claim_draw && pos.is_optional_game_end())
+      return true;
+    return MoveList<LEGAL>(pos).size() == 0;
+  }
+
+  std::string result() const {
+    return result(false);
+  }
+
+  std::string result(bool claim_draw) const {
+    Value result;
+    bool gameEnd = pos.is_immediate_game_end(result);
+    if (!gameEnd) {
+      if (is_insufficient_material()) {
+        gameEnd = true;
+        result = VALUE_DRAW;
+      }
+    }
+    if (!gameEnd && MoveList<LEGAL>(pos).size() == 0) {
+      gameEnd = true;
+      result = pos.checkers() ? pos.checkmate_value() : pos.stalemate_value();
+    }
+    if (!gameEnd && claim_draw)
+      gameEnd = pos.is_optional_game_end(result);
+
+    if (!gameEnd)
+      return "*";
+    if (result == 0) {
+      if (pos.material_counting())
+        result = pos.material_counting_result();
+
+      if (result == 0)
+        return "1/2-1/2";
+    }
+    if (pos.side_to_move() == BLACK)
+      result = -result;
+    if (result > 0)
+      return "1-0";
+    else
+      return "0-1";
   }
 
   bool is_check() const {
@@ -371,6 +427,7 @@ private:
       Board::sfInitialized = true;
     }
     v = get_variant(uciVariant);
+    UCI::init_variant(v);
     this->resetStates();
     if (fen == "")
       fen = v->startFen;
@@ -417,9 +474,13 @@ namespace ffish {
     return v->startFen;
   }
 
-  int validate_fen(std::string fen, std::string uciVariant) {
+  int validate_fen(std::string fen, std::string uciVariant, bool chess960) {
     const Variant* v = get_variant(uciVariant);
-    return fen::validate_fen(fen, v);
+    return FEN::validate_fen(fen, v, chess960);
+  }
+
+  int validate_fen(std::string fen, std::string uciVariant) {
+    return validate_fen(fen, uciVariant, false);
   }
 
   int validate_fen(std::string fen) {
@@ -609,7 +670,8 @@ EMSCRIPTEN_BINDINGS(ffish_js) {
     .function("pop", &Board::pop)
     .function("reset", &Board::reset)
     .function("is960", &Board::is_960)
-    .function("fen", &Board::fen)
+    .function("fen", select_overload<std::string()const>(&Board::fen))
+    .function("fen", select_overload<std::string(bool, int)const>(&Board::fen))
     .function("setFen", &Board::set_fen)
     .function("sanMove", select_overload<std::string(std::string)>(&Board::san_move))
     .function("sanMove", select_overload<std::string(std::string, Notation)>(&Board::san_move))
@@ -620,7 +682,12 @@ EMSCRIPTEN_BINDINGS(ffish_js) {
     .function("fullmoveNumber", &Board::fullmove_number)
     .function("halfmoveClock", &Board::halfmove_clock)
     .function("gamePly", &Board::game_ply)
-    .function("isGameOver", &Board::is_game_over)
+    .function("hasInsufficientMaterial", &Board::has_insufficient_material)
+    .function("isInsufficientMaterial", &Board::is_insufficient_material)
+    .function("isGameOver", select_overload<bool() const>(&Board::is_game_over))
+    .function("isGameOver", select_overload<bool(bool) const>(&Board::is_game_over))
+    .function("result", select_overload<std::string() const>(&Board::result))
+    .function("result", select_overload<std::string(bool) const>(&Board::result))
     .function("isCheck", &Board::is_check)
     .function("isBikjang", &Board::is_bikjang)
     .function("moveStack", &Board::move_stack)
@@ -645,6 +712,15 @@ EMSCRIPTEN_BINDINGS(ffish_js) {
     .value("SHOGI_HODGES_NUMBER", NOTATION_SHOGI_HODGES_NUMBER)
     .value("JANGGI", NOTATION_JANGGI)
     .value("XIANGQI_WXF", NOTATION_XIANGQI_WXF);
+  // usage: e.g. ffish.Termination.CHECKMATE
+  enum_<Termination>("Termination")
+    .value("ONGOING", ONGOING)
+    .value("CHECKMATE", CHECKMATE)
+    .value("STALEMATE", STALEMATE)
+    .value("INSUFFICIENT_MATERIAL", INSUFFICIENT_MATERIAL)
+    .value("N_MOVE_RULE", N_MOVE_RULE)
+    .value("N_FOLD_REPETITION", N_FOLD_REPETITION)
+    .value("VARIANT_END", VARIANT_END);
   function("info", &ffish::info);
   function("setOption", &ffish::set_option<std::string>);
   function("setOptionInt", &ffish::set_option<int>);
@@ -655,6 +731,7 @@ EMSCRIPTEN_BINDINGS(ffish_js) {
   function("startingFen", &ffish::starting_fen);
   function("validateFen", select_overload<int(std::string)>(&ffish::validate_fen));
   function("validateFen", select_overload<int(std::string, std::string)>(&ffish::validate_fen));
+  function("validateFen", select_overload<int(std::string, std::string, bool)>(&ffish::validate_fen));
   // TODO: enable to string conversion method
   // .class_function("getStringFromInstance", &Board::get_string_from_instance);
 }

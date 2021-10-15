@@ -33,6 +33,7 @@
 #include "misc.h"
 #include "pawns.h"
 #include "thread.h"
+#include "timeman.h"
 #include "uci.h"
 #include "incbin/incbin.h"
 
@@ -55,9 +56,10 @@
 
 
 using namespace std;
-using namespace Eval::NNUE;
 
-NnueFeatures currentNnueFeatures;
+namespace Stockfish {
+
+const Variant* currentNnueVariant;
 
 namespace Eval {
 
@@ -85,15 +87,11 @@ namespace Eval {
     stringstream ss(eval_file);
     string variant = string(Options["UCI_Variant"]);
     useNNUE = false;
-#ifndef _WIN32
-    constexpr char SepChar = ':';
-#else
-    constexpr char SepChar = ';';
-#endif
-    while (getline(ss, eval_file, SepChar))
+    while (getline(ss, eval_file, UCI::SepChar))
     {
         string basename = eval_file.substr(eval_file.find_last_of("\\/") + 1);
-        if (basename.rfind(variant, 0) != string::npos || (variant == "chess" && basename.rfind("nn-", 0) != string::npos))
+        string nnueAlias = variants.find(variant)->second->nnueAlias;
+        if (basename.rfind(variant, 0) != string::npos || (!nnueAlias.empty() && basename.rfind(nnueAlias, 0) != string::npos))
         {
             useNNUE = true;
             break;
@@ -102,7 +100,7 @@ namespace Eval {
     if (!useNNUE)
         return;
 
-    currentNnueFeatures = variants.find(variant)->second->nnueFeatures;
+    currentNnueVariant = variants.find(variant)->second;
 
     #if defined(DEFAULT_NNUE_DIRECTORY)
     #define stringify2(x) #x
@@ -205,7 +203,7 @@ namespace Trace {
     else
         os << scores[t][WHITE] << " | " << scores[t][BLACK];
 
-    os << " | " << scores[t][WHITE] - scores[t][BLACK] << "\n";
+    os << " | " << scores[t][WHITE] - scores[t][BLACK] << " |\n";
     return os;
   }
 }
@@ -215,11 +213,9 @@ using namespace Trace;
 namespace {
 
   // Threshold for lazy and space evaluation
-  constexpr Value LazyThreshold1 =  Value(1565);
-  constexpr Value LazyThreshold2 =  Value(1102);
-  constexpr Value SpaceThreshold = Value(11551);
-  constexpr Value NNUEThreshold1 =   Value(682);
-  constexpr Value NNUEThreshold2 =   Value(176);
+  constexpr Value LazyThreshold1    =  Value(1565);
+  constexpr Value LazyThreshold2    =  Value(1102);
+  constexpr Value SpaceThreshold    =  Value(11551);
 
   // KingAttackWeights[PieceType] contains king attack weights by piece type
   constexpr int KingAttackWeights[PIECE_TYPE_NB] = { 0, 0, 81, 52, 44, 10, 40 };
@@ -284,11 +280,12 @@ namespace {
     S(0, 0), S(3, 44), S(37, 68), S(42, 60), S(0, 39), S(58, 43)
   };
 
+  constexpr Value CorneredBishop = Value(50);
+
   // Assorted bonuses and penalties
   constexpr Score UncontestedOutpost  = S(  1, 10);
   constexpr Score BishopOnKingRing    = S( 24,  0);
   constexpr Score BishopXRayPawns     = S(  4,  5);
-  constexpr Score CorneredBishop      = S( 50, 50);
   constexpr Score FlankAttacks        = S(  8,  0);
   constexpr Score Hanging             = S( 69, 36);
   constexpr Score KnightOnQueen       = S( 16, 11);
@@ -453,8 +450,9 @@ namespace {
 
     attackedBy[Us][Pt] = 0;
 
-    while (b1) {
-        Square s = pop_lsb(&b1);
+    while (b1)
+    {
+        Square s = pop_lsb(b1);
 
         // Find attacked squares, including x-ray attacks for bishops and rooks
         b = Pt == BISHOP ? attacks_bb<BISHOP>(s, pos.pieces() ^ pos.pieces(QUEEN))
@@ -572,9 +570,8 @@ namespace {
                 {
                     Direction d = pawn_push(Us) + (file_of(s) == FILE_A ? EAST : WEST);
                     if (pos.piece_on(s + d) == make_piece(Us, PAWN))
-                        score -= !pos.empty(s + d + pawn_push(Us))                ? CorneredBishop * 4
-                                : pos.piece_on(s + d + d) == make_piece(Us, PAWN) ? CorneredBishop * 2
-                                                                                  : CorneredBishop;
+                        score -= !pos.empty(s + d + pawn_push(Us)) ? 4 * make_score(CorneredBishop, CorneredBishop)
+                                                                   : 3 * make_score(CorneredBishop, CorneredBishop);
                 }
             }
         }
@@ -628,7 +625,7 @@ namespace {
 
     Score score = SCORE_ZERO;
 
-    if (pos.count_in_hand(Us, pt))
+    if (pos.count_in_hand(Us, pt) > 0 && pt != KING)
     {
         Bitboard b = pos.drop_region(Us, pt) & ~pos.pieces() & (~attackedBy2[Them] | attackedBy[Us][ALL_PIECES]);
         if ((b & kingRing[Them]) && pt != SHOGI_PAWN)
@@ -639,9 +636,13 @@ namespace {
         }
         Bitboard theirHalf = pos.board_bb() & ~forward_ranks_bb(Them, relative_rank(Them, Rank((pos.max_rank() - 1) / 2), pos.max_rank()));
         mobility[Us] += DropMobility * popcount(b & theirHalf & ~attackedBy[Them][ALL_PIECES]);
+
+        // Bonus for Kyoto shogi style drops of promoted pieces
         if (pos.promoted_piece_type(pt) != NO_PIECE_TYPE && pos.drop_promoted())
             score += make_score(std::max(PieceValue[MG][pos.promoted_piece_type(pt)] - PieceValue[MG][pt], VALUE_ZERO),
                                 std::max(PieceValue[EG][pos.promoted_piece_type(pt)] - PieceValue[EG][pt], VALUE_ZERO)) / 4 * pos.count_in_hand(Us, pt);
+
+        // Mobility bonus for reversi variants
         if (pos.enclosing_drop())
             mobility[Us] += make_score(500, 500) * popcount(b);
 
@@ -691,7 +692,7 @@ namespace {
     b2 = attacks_bb<BISHOP>(ksq, pos.pieces() ^ pos.pieces(Us, QUEEN));
 
     std::function <Bitboard (Color, PieceType)> get_attacks = [this](Color c, PieceType pt) {
-        return attackedBy[c][pt] | (pos.piece_drops() && pos.count_in_hand(c, pt) ? pos.drop_region(c, pt) & ~pos.pieces() : Bitboard(0));
+        return attackedBy[c][pt] | (pos.piece_drops() && pos.count_in_hand(c, pt) > 0 ? pos.drop_region(c, pt) & ~pos.pieces() : Bitboard(0));
     };
     for (PieceType pt : pos.piece_types())
     {
@@ -720,7 +721,7 @@ namespace {
                 unsafeChecks |= knightChecks;
             break;
         case PAWN:
-            if (pos.piece_drops() && pos.count_in_hand(Them, pt))
+            if (pos.piece_drops() && pos.count_in_hand(Them, pt) > 0)
             {
                 pawnChecks = attacks_bb(Us, pt, ksq, pos.pieces()) & ~pos.pieces() & pos.board_bb();
                 if (pawnChecks & safe)
@@ -755,7 +756,7 @@ namespace {
     if (pos.two_boards() && pos.piece_drops())
     {
         for (PieceType pt : pos.piece_types())
-            if (!pos.count_in_hand(Them, pt) && (attacks_bb(Us, pt, ksq, pos.pieces()) & safe & pos.drop_region(Them, pt) & ~pos.pieces()))
+            if (pos.count_in_hand(Them, pt) <= 0 && (attacks_bb(Us, pt, ksq, pos.pieces()) & safe & pos.drop_region(Them, pt) & ~pos.pieces()))
             {
                 kingDanger += VirtualCheck * 500 / (500 + PieceValue[MG][pt]);
                 // Presumably a mate threat
@@ -850,7 +851,7 @@ namespace {
         Bitboard moves = 0, piecebb = pos.pieces(Us);
         while (piecebb)
         {
-            Square s = pop_lsb(&piecebb);
+            Square s = pop_lsb(piecebb);
             if (type_of(pos.piece_on(s)) != KING)
                 moves |= pos.moves_from(Us, type_of(pos.piece_on(s)), s);
         }
@@ -877,7 +878,7 @@ namespace {
                 Bitboard bExtBlast = bExt & (attackedBy2[Us] | ~attackedBy[Us][pt]);
                 while (bExtBlast)
                 {
-                    Square s = pop_lsb(&bExtBlast);
+                    Square s = pop_lsb(bExtBlast);
                     if (((attacks_bb<KING>(s) | s) & pos.pieces(Them, pt)) && !(attacks_bb<KING>(s) & pos.pieces(Us, pt)))
                         explosions++;
                 }
@@ -909,11 +910,11 @@ namespace {
     {
         b = (defended | weak) & (attackedBy[Us][KNIGHT] | attackedBy[Us][BISHOP]);
         while (b)
-            score += ThreatByMinor[type_of(pos.piece_on(pop_lsb(&b)))];
+            score += ThreatByMinor[type_of(pos.piece_on(pop_lsb(b)))];
 
         b = weak & attackedBy[Us][ROOK];
         while (b)
-            score += ThreatByRook[type_of(pos.piece_on(pop_lsb(&b)))];
+            score += ThreatByRook[type_of(pos.piece_on(pop_lsb(b)))];
 
         if (weak & attackedBy[Us][KING])
             score += ThreatByKing;
@@ -1011,7 +1012,7 @@ namespace {
 
     while (b)
     {
-        Square s = pop_lsb(&b);
+        Square s = pop_lsb(b);
 
         assert(!(pos.pieces(Them, PAWN) & forward_file_bb(Us, s + Up)));
 
@@ -1081,7 +1082,7 @@ namespace {
         b = pos.pieces(Us, SHOGI_PAWN);
         while (b)
         {
-            Square s = pop_lsb(&b);
+            Square s = pop_lsb(b);
             if ((pos.pieces(Them, SHOGI_PAWN) & forward_file_bb(Us, s)) || relative_rank(Us, s, pos.max_rank()) == pos.max_rank())
                 continue;
 
@@ -1178,6 +1179,7 @@ namespace {
         Bitboard inaccessible = pos.pieces(Us, PAWN) & shift<Down>(pos.pieces(Them, PAWN));
         // Traverse all paths of the CTF pieces to the CTF targets.
         // Put squares that are attacked or occupied on hold for one iteration.
+        // This reflects that likely a move will be needed to block or capture the attack.
         for (int dist = 0; (ctfPieces || onHold || onHold2) && (ctfTargets & ~processed); dist++)
         {
             int wins = popcount(ctfTargets & ctfPieces);
@@ -1190,7 +1192,7 @@ namespace {
             onHold2 = 0;
             while (current)
             {
-                Square s = pop_lsb(&current);
+                Square s = pop_lsb(current);
                 Bitboard attacks = (  (PseudoAttacks[Us][ptCtf][s] & pos.pieces())
                                     | (PseudoMoves[Us][ptCtf][s] & ~pos.pieces())) & ~processed & pos.board_bb();
                 ctfPieces |= attacks & ~blocked;
@@ -1214,6 +1216,7 @@ namespace {
         for (PieceType pt : pos.extinction_piece_types())
             if (pt != ALL_PIECES)
             {
+                // Single piece type extinction bonus
                 int denom = std::max(pos.count(Us, pt) - pos.extinction_piece_count(), 1);
                 if (pos.count(Them, pt) >= pos.extinction_opponent_piece_count() || pos.two_boards())
                     score += make_score(1000000 / (500 + PieceValue[MG][pt]),
@@ -1221,7 +1224,10 @@ namespace {
                             * (pos.extinction_value() / VALUE_MATE);
             }
             else if (pos.extinction_value() == VALUE_MATE)
-                score += make_score(pos.non_pawn_material(Us), pos.non_pawn_material(Us)) / pos.count<ALL_PIECES>(Us);
+            {
+                // Losing chess variant bonus
+                score += make_score(pos.non_pawn_material(Us), pos.non_pawn_material(Us)) / std::max(pos.count<ALL_PIECES>(Us), 1);
+            }
             else if (pos.count<PAWN>(Us) == pos.count<ALL_PIECES>(Us))
             {
                 // Pawns easy to stop/capture
@@ -1233,7 +1239,7 @@ namespace {
                                         80 - 15 * (edge_distance(f, pos.max_file()) % 2)) * m / (1 + l * r);
                 }
             }
-            else if (pos.count<PAWN>(Them) == pos.count<ALL_PIECES>(Them) && pos.pieces(Us, ROOK, QUEEN))
+            else if (pos.count<PAWN>(Them) == pos.count<ALL_PIECES>(Them))
             {
                 // Add a bonus according to how close we are to breaking through the pawn wall
                 int dist = 8;
@@ -1258,7 +1264,7 @@ namespace {
             // Count number of pieces per gap
             while (b)
             {
-                Square s = pop_lsb(&b);
+                Square s = pop_lsb(b);
                 int c = 0;
                 for (int j = 0; j < pos.connect_n(); j++)
                     if (pos.pieces(Us) & (s - j * d))
@@ -1268,7 +1274,7 @@ namespace {
         }
     }
 
-    // Potential piece flips
+    // Potential piece flips (Reversi)
     if (pos.flip_enclosed_pieces())
     {
         // Stable pieces
@@ -1278,7 +1284,7 @@ namespace {
             Bitboard edgePieces = pos.pieces(Us) & edges;
             while (edgePieces)
             {
-                Bitboard connectedEdge = attacks_bb(Us, ROOK, pop_lsb(&edgePieces), ~(pos.pieces(Us) & edges)) & edges;
+                Bitboard connectedEdge = attacks_bb(Us, ROOK, pop_lsb(edgePieces), ~(pos.pieces(Us) & edges)) & edges;
                 if (!more_than_one(connectedEdge & ~pos.pieces(Us)))
                     score += make_score(300, 300);
                 else if (!(connectedEdge & ~pos.pieces()))
@@ -1291,12 +1297,12 @@ namespace {
         Bitboard drops = pos.drop_region(Them, IMMOBILE_PIECE);
         while (drops)
         {
-            Square s = pop_lsb(&drops);
+            Square s = pop_lsb(drops);
             if (pos.flip_enclosed_pieces() == REVERSI)
             {
                 Bitboard b = attacks_bb(Them, QUEEN, s, ~pos.pieces(Us)) & ~PseudoAttacks[Them][KING][s] & pos.pieces(Them);
                 while(b)
-                    unstable |= between_bb(s, pop_lsb(&b));
+                    unstable |= between_bb(s, pop_lsb(b));
             }
             else
                 unstable |= PseudoAttacks[Them][KING][s] & pos.pieces(Us);
@@ -1365,7 +1371,7 @@ namespace {
     Color strongSide = eg > VALUE_DRAW ? WHITE : BLACK;
     int sf = me->scale_factor(pos, strongSide);
 
-    // If scale factor is not already specific, scale down via general heuristics
+    // If scale factor is not already specific, scale up/down via general heuristics
     if (sf == SCALE_FACTOR_NORMAL && !pos.captures_to_hand() && !pos.material_counting())
     {
         if (pos.opposite_bishops())
@@ -1443,7 +1449,7 @@ namespace {
     Score score = pos.psq_score();
     if (T)
         Trace::add(MATERIAL, score);
-    score += me->imbalance() + pos.this_thread()->contempt;
+    score += me->imbalance() + pos.this_thread()->trend;
 
     // Probe the pawn hash table
     pe = Pawns::probe(pos);
@@ -1458,18 +1464,19 @@ namespace {
         goto make_v;
 
     // Main evaluation begins here
+    std::memset(attackedBy, 0, sizeof(attackedBy));
     initialize<WHITE>();
     initialize<BLACK>();
 
     // Pieces evaluated first (also populates attackedBy, attackedBy2).
     // For unused piece types, we still need to set attack bitboard to zero.
-    for (PieceType pt = KNIGHT; pt < KING; ++pt)
-        if (pt != SHOGI_PAWN)
+    for (PieceType pt : pos.piece_types())
+        if (pt != SHOGI_PAWN && pt != PAWN && pt != KING)
             score += pieces<WHITE>(pt) - pieces<BLACK>(pt);
 
     // Evaluate pieces in hand once attack tables are complete
     if (pos.piece_drops() || pos.seirawan_gating())
-        for (PieceType pt = PAWN; pt < KING; ++pt)
+        for (PieceType pt : pos.piece_types())
             score += hand<WHITE>(pt) - hand<BLACK>(pt);
 
     score += (mobility[WHITE] - mobility[BLACK]) * (1 + pos.captures_to_hand() + pos.must_capture() + pos.check_counting());
@@ -1501,19 +1508,48 @@ make_v:
     v = (v / 16) * 16;
 
     // Side to move point of view
-    v = (pos.side_to_move() == WHITE ? v : -v) + Eval::tempo_value(pos);
+    v = (pos.side_to_move() == WHITE ? v : -v) + 80 * pos.captures_to_hand();
 
     return v;
   }
 
-} // namespace
 
+  /// Fisher Random Chess: correction for cornered bishops, to fix chess960 play with NNUE
 
-/// tempo_value() returns the evaluation offset for the side to move
+  Value fix_FRC(const Position& pos) {
 
-Value Eval::tempo_value(const Position& pos) {
-  return Tempo * (1 + 4 * pos.captures_to_hand());
-}
+    constexpr Bitboard Corners =  Bitboard(1ULL) << SQ_A1 | Bitboard(1ULL) << SQ_H1 | Bitboard(1ULL) << SQ_A8 | Bitboard(1ULL) << SQ_H8;
+
+    if (!(pos.pieces(BISHOP) & Corners))
+        return VALUE_ZERO;
+
+    int correction = 0;
+
+    if (   pos.piece_on(SQ_A1) == W_BISHOP
+        && pos.piece_on(SQ_B2) == W_PAWN)
+        correction += !pos.empty(SQ_B3) ? -CorneredBishop * 4
+                                        : -CorneredBishop * 3;
+
+    if (   pos.piece_on(SQ_H1) == W_BISHOP
+        && pos.piece_on(SQ_G2) == W_PAWN)
+        correction += !pos.empty(SQ_G3) ? -CorneredBishop * 4
+                                        : -CorneredBishop * 3;
+
+    if (   pos.piece_on(SQ_A8) == B_BISHOP
+        && pos.piece_on(SQ_B7) == B_PAWN)
+        correction += !pos.empty(SQ_B6) ? CorneredBishop * 4
+                                        : CorneredBishop * 3;
+
+    if (   pos.piece_on(SQ_H8) == B_BISHOP
+        && pos.piece_on(SQ_G7) == B_PAWN)
+        correction += !pos.empty(SQ_G6) ? CorneredBishop * 4
+                                        : CorneredBishop * 3;
+
+    return pos.side_to_move() == WHITE ?  Value(correction)
+                                       : -Value(correction);
+  }
+
+} // namespace Eval
 
 
 /// evaluate() is the evaluator for the outer world. It returns a static
@@ -1523,45 +1559,41 @@ Value Eval::evaluate(const Position& pos) {
 
   Value v;
 
-  if (!Eval::useNNUE)
+  if (!Eval::useNNUE || !pos.nnue_applicable())
       v = Evaluation<NO_TRACE>(pos).value();
   else
   {
       // Scale and shift NNUE for compatibility with search and classical evaluation
-      auto  adjusted_NNUE = [&](){
-         int mat = pos.non_pawn_material() + 2 * PawnValueMg * pos.count<PAWN>();
-         int v2 = VALUE_ZERO;
+      auto  adjusted_NNUE = [&]()
+      {
+         int scale =   903
+                     + 32 * pos.count<PAWN>()
+                     + 32 * pos.non_pawn_material() / 1024;
+
+         Value nnue = NNUE::evaluate(pos, true) * scale / 1024;
+
+         if (pos.is_chess960())
+             nnue += fix_FRC(pos);
+
          if (pos.check_counting())
          {
              Color us = pos.side_to_move();
-             v2 =  mat / (30 * pos.checks_remaining( us))
-                 - mat / (30 * pos.checks_remaining(~us));
+             nnue +=  6 * scale / (5 * pos.checks_remaining( us))
+                    - 6 * scale / (5 * pos.checks_remaining(~us));
          }
-         return NNUE::evaluate(pos) * (641 + mat / 32 - 4 * pos.rule50_count()) / 1024 + Tempo + v2;
+
+         return nnue;
       };
 
-      // If there is PSQ imbalance use classical eval, with small probability if it is small
+      // If there is PSQ imbalance we use the classical eval, but we switch to
+      // NNUE eval faster when shuffling or if the material on the board is high.
+      int r50 = pos.rule50_count();
       Value psq = Value(abs(eg_value(pos.psq_score())));
-      int   r50 = 16 + pos.rule50_count();
-      bool  pure = !pos.check_counting();
-      bool  largePsq = psq * 16 > (NNUEThreshold1 + pos.non_pawn_material() / 64) * r50 && !pure;
-      bool  classical = largePsq || (psq > PawnValueMg / 4 && !(pos.this_thread()->nodes & 0xB) && !pure);
+      bool pure = !pos.check_counting();
+      bool classical = psq * 5 > (750 + pos.non_pawn_material() / 64) * (5 + r50) && !pure;
 
-      // Use classical evaluation for really low piece endgames.
-      // The most critical case is a bishop + A/H file pawn vs naked king draw.
-      bool strongClassical = pos.non_pawn_material() < 2 * RookValueMg && pos.count<PAWN>() < 2;
-
-      v = classical || strongClassical ? Evaluation<NO_TRACE>(pos).value() : adjusted_NNUE();
-
-      // If the classical eval is small and imbalance large, use NNUE nevertheless.
-      // For the case of opposite colored bishops, switch to NNUE eval with
-      // small probability if the classical eval is less than the threshold.
-      if (   largePsq && !strongClassical
-          && (   abs(v) * 16 < NNUEThreshold2 * r50
-              || (   pos.opposite_bishops()
-                  && abs(v) * 16 < (NNUEThreshold1 + pos.non_pawn_material() / 64) * r50
-                  && !(pos.this_thread()->nodes & 0xB))))
-          v = adjusted_NNUE();
+      v = classical ? Evaluation<NO_TRACE>(pos).value()  // classical
+                    : adjusted_NNUE();                   // NNUE
   }
 
   // Damp down the evaluation linearly when shuffling
@@ -1571,6 +1603,10 @@ Value Eval::evaluate(const Position& pos) {
       if (pos.material_counting())
           v += pos.material_counting_result() / (10 * std::max(2 * pos.n_move_rule() - pos.rule50_count(), 1));
   }
+
+  // Guarantee evaluation does not hit the virtual win/loss range
+  if (pos.two_boards() && std::abs(v) >= VALUE_VIRTUAL_MATE_IN_MAX_PLY)
+      v += v > VALUE_ZERO ? MAX_PLY + 1 : -MAX_PLY - 1;
 
   // Guarantee evaluation does not hit the tablebase range
   v = std::clamp(v, VALUE_TB_LOSS_IN_MAX_PLY + 1, VALUE_TB_WIN_IN_MAX_PLY - 1);
@@ -1583,7 +1619,7 @@ Value Eval::evaluate(const Position& pos) {
 /// descriptions and values of each evaluation term. Useful for debugging.
 /// Trace scores are from white's point of view
 
-std::string Eval::trace(const Position& pos) {
+std::string Eval::trace(Position& pos) {
 
   if (pos.checkers())
       return "Final evaluation: none (in check)";
@@ -1595,45 +1631,56 @@ std::string Eval::trace(const Position& pos) {
 
   std::memset(scores, 0, sizeof(scores));
 
-  pos.this_thread()->contempt = SCORE_ZERO; // Reset any dynamic contempt
+  pos.this_thread()->trend = SCORE_ZERO; // Reset any dynamic contempt
 
   v = Evaluation<TRACE>(pos).value();
 
   ss << std::showpoint << std::noshowpos << std::fixed << std::setprecision(2)
-     << "     Term    |    White    |    Black    |    Total   \n"
-     << "             |   MG    EG  |   MG    EG  |   MG    EG \n"
-     << " ------------+-------------+-------------+------------\n"
-     << "    Material | " << Term(MATERIAL)
-     << "   Imbalance | " << Term(IMBALANCE)
-     << "       Pawns | " << Term(PAWN)
-     << "     Knights | " << Term(KNIGHT)
-     << "     Bishops | " << Term(BISHOP)
-     << "       Rooks | " << Term(ROOK)
-     << "      Queens | " << Term(QUEEN)
-     << "    Mobility | " << Term(MOBILITY)
-     << " King safety | " << Term(KING)
-     << "     Threats | " << Term(THREAT)
-     << "      Passed | " << Term(PASSED)
-     << "       Space | " << Term(SPACE)
-     << "     Variant | " << Term(VARIANT)
-     << "    Winnable | " << Term(WINNABLE)
-     << " ------------+-------------+-------------+------------\n"
-     << "       Total | " << Term(TOTAL);
+     << " Contributing terms for the classical eval:\n"
+     << "+------------+-------------+-------------+-------------+\n"
+     << "|    Term    |    White    |    Black    |    Total    |\n"
+     << "|            |   MG    EG  |   MG    EG  |   MG    EG  |\n"
+     << "+------------+-------------+-------------+-------------+\n"
+     << "|   Material | " << Term(MATERIAL)
+     << "|  Imbalance | " << Term(IMBALANCE)
+     << "|      Pawns | " << Term(PAWN)
+     << "|    Knights | " << Term(KNIGHT)
+     << "|    Bishops | " << Term(BISHOP)
+     << "|      Rooks | " << Term(ROOK)
+     << "|     Queens | " << Term(QUEEN)
+     << "|   Mobility | " << Term(MOBILITY)
+     << "|King safety | " << Term(KING)
+     << "|    Threats | " << Term(THREAT)
+     << "|     Passed | " << Term(PASSED)
+     << "|      Space | " << Term(SPACE)
+     << "|    Variant | " << Term(VARIANT)
+     << "|   Winnable | " << Term(WINNABLE)
+     << "+------------+-------------+-------------+-------------+\n"
+     << "|      Total | " << Term(TOTAL)
+     << "+------------+-------------+-------------+-------------+\n";
+
+  if (Eval::useNNUE && pos.nnue_applicable())
+      ss << '\n' << NNUE::trace(pos) << '\n';
+
+  ss << std::showpoint << std::showpos << std::fixed << std::setprecision(2) << std::setw(15);
 
   v = pos.side_to_move() == WHITE ? v : -v;
-
-  ss << "\nClassical evaluation: " << to_cp(v) << " (white side)\n";
-
-  if (Eval::useNNUE)
+  ss << "\nClassical evaluation   " << to_cp(v) << " (white side)\n";
+  if (Eval::useNNUE && pos.nnue_applicable())
   {
-      v = NNUE::evaluate(pos);
+      v = NNUE::evaluate(pos, false);
       v = pos.side_to_move() == WHITE ? v : -v;
-      ss << "\nNNUE evaluation:      " << to_cp(v) << " (white side)\n";
+      ss << "NNUE evaluation        " << to_cp(v) << " (white side)\n";
   }
 
   v = evaluate(pos);
   v = pos.side_to_move() == WHITE ? v : -v;
-  ss << "\nFinal evaluation:     " << to_cp(v) << " (white side)\n";
+  ss << "Final evaluation       " << to_cp(v) << " (white side)";
+  if (Eval::useNNUE && pos.nnue_applicable())
+     ss << " [with scaled NNUE, hybrid, ...]";
+  ss << "\n";
 
   return ss.str();
 }
+
+} // namespace Stockfish

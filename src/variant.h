@@ -24,10 +24,13 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include <sstream>
+#include <iostream>
 
 #include "types.h"
 #include "bitboard.h"
 
+namespace Stockfish {
 
 /// Variant struct stores information needed to determine the rules of a variant.
 
@@ -39,6 +42,8 @@ struct Variant {
   File maxFile = FILE_H;
   bool chess960 = false;
   bool twoBoards = false;
+  int pieceValue[PHASE_NB][PIECE_TYPE_NB] = {};
+  std::string customPiece[CUSTOM_PIECES_NB] = {};
   std::set<PieceType> pieceTypes = { PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING };
   std::string pieceToChar =  " PNBRQ" + std::string(KING - QUEEN - 1, ' ') + "K" + std::string(PIECE_TYPE_NB - KING - 1, ' ')
                            + " pnbrq" + std::string(KING - QUEEN - 1, ' ') + "k" + std::string(PIECE_TYPE_NB - KING - 1, ' ');
@@ -87,6 +92,7 @@ struct Variant {
   bool dropOppositeColoredBishop = false;
   bool dropPromoted = false;
   PieceType dropNoDoubled = NO_PIECE_TYPE;
+  int dropNoDoubledCount = 1;
   bool immobilityIllegal = false;
   bool gating = false;
   bool arrowGating = false;
@@ -99,6 +105,7 @@ struct Variant {
   bool flyingGeneral = false;
   Rank soldierPromotionRank = RANK_1;
   EnclosingRule flipEnclosedPieces = NO_ENCLOSING;
+
   // game end
   int nMoveRule = 50;
   int nFoldRule = 3;
@@ -127,20 +134,32 @@ struct Variant {
   MaterialCounting materialCounting = NO_MATERIAL_COUNTING;
   CountingRule countingRule = NO_COUNTING;
 
-  NnueFeatures nnueFeatures = NNUE_VARIANT;
-
   // Derived properties
   bool fastAttacks = true;
   bool fastAttacks2 = true;
+  std::string nnueAlias = "";
   PieceType nnueKing = KING;
+  int nnueDimensions;
+  bool nnueUsePockets;
+  int pieceSquareIndex[COLOR_NB][PIECE_NB];
+  int pieceHandIndex[COLOR_NB][PIECE_NB];
+  int kingSquareIndex[SQUARE_NB];
+  int nnueMaxPieces;
   bool endgameEval = false;
 
-  void add_piece(PieceType pt, char c, char c2 = ' ') {
+  void add_piece(PieceType pt, char c, std::string betza = "", char c2 = ' ') {
       pieceToChar[make_piece(WHITE, pt)] = toupper(c);
       pieceToChar[make_piece(BLACK, pt)] = tolower(c);
       pieceToCharSynonyms[make_piece(WHITE, pt)] = toupper(c2);
       pieceToCharSynonyms[make_piece(BLACK, pt)] = tolower(c2);
       pieceTypes.insert(pt);
+      // Add betza notation for custom piece
+      if (is_custom(pt))
+          customPiece[pt - CUSTOM_PIECES] = betza;
+  }
+
+  void add_piece(PieceType pt, char c, char c2) {
+      add_piece(pt, c, "", c2);
   }
 
   void remove_piece(PieceType pt) {
@@ -155,6 +174,12 @@ struct Variant {
       pieceToChar = std::string(PIECE_NB, ' ');
       pieceToCharSynonyms = std::string(PIECE_NB, ' ');
       pieceTypes.clear();
+  }
+
+  // Reset values that always need to be redefined
+  Variant* init() {
+      nnueAlias = "";
+      return this;
   }
 
   // Pre-calculate derived properties
@@ -178,9 +203,69 @@ struct Variant {
                                 })
                     && !cambodianMoves
                     && !diagonalLines;
+
+      // Initialize calculated NNUE properties
       nnueKing =  pieceTypes.find(KING) != pieceTypes.end() ? KING
-                : extinctionPieceTypes.find(COMMONER) != extinctionPieceTypes.end() ? COMMONER
+                : extinctionPieceCount == 0 && extinctionPieceTypes.find(COMMONER) != extinctionPieceTypes.end() ? COMMONER
                 : NO_PIECE_TYPE;
+      if (nnueKing != NO_PIECE_TYPE)
+      {
+          std::string fenBoard = startFen.substr(0, startFen.find(' '));
+          // Switch NNUE from KA to A if there is no unique piece
+          if (   std::count(fenBoard.begin(), fenBoard.end(), pieceToChar[make_piece(WHITE, nnueKing)]) != 1
+              || std::count(fenBoard.begin(), fenBoard.end(), pieceToChar[make_piece(BLACK, nnueKing)]) != 1)
+              nnueKing = NO_PIECE_TYPE;
+      }
+      int nnueSquares = (maxRank + 1) * (maxFile + 1);
+      nnueUsePockets = (pieceDrops && (!mustDrop || capturesToHand)) || seirawanGating;
+      int nnuePockets = nnueUsePockets ? 2 * int(maxFile + 1) : 0;
+      int nnueNonDropPieceIndices = (2 * pieceTypes.size() - (nnueKing != NO_PIECE_TYPE)) * nnueSquares;
+      int nnuePieceIndices = nnueNonDropPieceIndices + 2 * (pieceTypes.size() - (nnueKing != NO_PIECE_TYPE)) * nnuePockets;
+      int i = 0;
+      for (PieceType pt : pieceTypes)
+      {
+          for (Color c : { WHITE, BLACK})
+          {
+              pieceSquareIndex[c][make_piece(c, pt)] = 2 * i * nnueSquares;
+              pieceSquareIndex[c][make_piece(~c, pt)] = (2 * i + (pt != nnueKing)) * nnueSquares;
+              pieceHandIndex[c][make_piece(c, pt)] = 2 * i * nnuePockets + nnueNonDropPieceIndices;
+              pieceHandIndex[c][make_piece(~c, pt)] = (2 * i + 1) * nnuePockets + nnueNonDropPieceIndices;
+          }
+          i++;
+      }
+
+      // Map king squares to enumeration of actually available squares.
+      // E.g., for xiangqi map from 0-89 to 0-8.
+      // Variants might be initialized before bitboards, so do not rely on precomputed bitboards (like SquareBB).
+      int nnueKingSquare = 0;
+      if (nnueKing)
+          for (Square s = SQ_A1; s < nnueSquares; ++s)
+          {
+              Square bitboardSquare = Square(s + s / (maxFile + 1) * (FILE_MAX - maxFile));
+              if (   !mobilityRegion[WHITE][nnueKing] || !mobilityRegion[BLACK][nnueKing]
+                  || (mobilityRegion[WHITE][nnueKing] & make_bitboard(bitboardSquare))
+                  || (mobilityRegion[BLACK][nnueKing] & make_bitboard(relative_square(BLACK, bitboardSquare, maxRank))))
+              {
+                  kingSquareIndex[s] = nnueKingSquare++ * nnuePieceIndices;
+              }
+          }
+      else
+          kingSquareIndex[SQ_A1] = nnueKingSquare++ * nnuePieceIndices;
+      nnueDimensions = nnueKingSquare * nnuePieceIndices;
+
+      // Determine maximum piece count
+      std::istringstream ss(startFen);
+      ss >> std::noskipws;
+      unsigned char token;
+      nnueMaxPieces = 0;
+      while ((ss >> token) && !isspace(token))
+      {
+          if (pieceToChar.find(token) != std::string::npos || pieceToCharSynonyms.find(token) != std::string::npos)
+              nnueMaxPieces++;
+      }
+      if (twoBoards)
+          nnueMaxPieces *= 2;
+
       // For endgame evaluation to be applicable, no special win rules must apply.
       // Furthermore, rules significantly changing game mechanics also invalidate it.
       endgameEval = std::none_of(pieceTypes.begin(), pieceTypes.end(), [this](PieceType pt) {
@@ -212,9 +297,11 @@ public:
   std::vector<std::string> get_keys();
 
 private:
-  void add(std::string s, const Variant* v);
+  void add(std::string s, Variant* v);
 };
 
 extern VariantMap variants;
+
+} // namespace Stockfish
 
 #endif // #ifndef VARIANT_H_INCLUDED

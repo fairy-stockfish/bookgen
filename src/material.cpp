@@ -24,6 +24,8 @@
 
 using namespace std;
 
+namespace Stockfish {
+
 namespace {
   #define S(mg, eg) make_score(mg, eg)
 
@@ -81,7 +83,7 @@ namespace {
 
   bool is_KBPsK(const Position& pos, Color us) {
     return   pos.non_pawn_material(us) == BishopValueMg
-          && pos.count<PAWN  >(us) >= 1;
+          && pos.count<PAWN>(us) >= 1;
   }
 
   bool is_KQKRPs(const Position& pos, Color us) {
@@ -167,7 +169,7 @@ Entry* probe(const Position& pos) {
           npm2 += pos.count_in_hand(pt) * PieceValue[MG][make_piece(WHITE, pt)];
       e->gamePhase = Phase(PHASE_MIDGAME * npm / std::max(int(npm + npm2), 1));
       int countAll = pos.count_with_hand(WHITE, ALL_PIECES) + pos.count_with_hand(BLACK, ALL_PIECES);
-      e->materialDensity = (npm + npm2 + pos.count<PAWN>() * PawnValueMg) * countAll / ((pos.max_file() + 1) * (pos.max_rank() + 1));
+      e->materialDensity = (npm + npm2 + pos.count<PAWN>() * PawnValueMg) * countAll / (pos.files() * pos.ranks());
   }
   else
       e->gamePhase = Phase(((npm - EndgameLimit) * PHASE_MIDGAME) / (MidgameLimit - EndgameLimit));
@@ -265,3 +267,5 @@ Entry* probe(const Position& pos) {
 }
 
 } // namespace Material
+
+} // namespace Stockfish

@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <sstream>
+#include <math.h>
 
 #include "bitboard.h"
 #include "types.h"
@@ -29,9 +30,52 @@
 #include "variant.h"
 #include "misc.h"
 
+
+namespace Stockfish {
+
 Value EvalPieceValue[PHASE_NB][PIECE_NB];
 Value CapturePieceValue[PHASE_NB][PIECE_NB];
 
+Value PieceValue[PHASE_NB][PIECE_NB] = {
+  {
+    VALUE_ZERO, PawnValueMg, KnightValueMg, BishopValueMg, RookValueMg, QueenValueMg, FersValueMg, AlfilValueMg,
+    FersAlfilValueMg, SilverValueMg, AiwokValueMg, BersValueMg, ArchbishopValueMg, ChancellorValueMg, AmazonValueMg, KnibisValueMg,
+    BiskniValueMg, KnirooValueMg, RookniValueMg, ShogiPawnValueMg, LanceValueMg, ShogiKnightValueMg, GoldValueMg, DragonHorseValueMg,
+    ClobberPieceValueMg, BreakthroughPieceValueMg, ImmobilePieceValueMg, CannonPieceValueMg, JanggiCannonPieceValueMg, SoldierValueMg, HorseValueMg, ElephantValueMg,
+    JanggiElephantValueMg, BannerValueMg, WazirValueMg, CommonerValueMg, CentaurValueMg, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO,
+    VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO,
+    VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO,
+    VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO,
+
+    VALUE_ZERO, PawnValueMg, KnightValueMg, BishopValueMg, RookValueMg, QueenValueMg, FersValueMg, AlfilValueMg,
+    FersAlfilValueMg, SilverValueMg, AiwokValueMg, BersValueMg, ArchbishopValueMg, ChancellorValueMg, AmazonValueMg, KnibisValueMg,
+    BiskniValueMg, KnirooValueMg, RookniValueMg, ShogiPawnValueMg, LanceValueMg, ShogiKnightValueMg, GoldValueMg, DragonHorseValueMg,
+    ClobberPieceValueMg, BreakthroughPieceValueMg, ImmobilePieceValueMg, CannonPieceValueMg, JanggiCannonPieceValueMg, SoldierValueMg, HorseValueMg, ElephantValueMg,
+    JanggiElephantValueMg, BannerValueMg, WazirValueMg, CommonerValueMg, CentaurValueMg, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO,
+    VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO,
+    VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO,
+    VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO,
+  },
+  {
+    VALUE_ZERO, PawnValueEg, KnightValueEg, BishopValueEg, RookValueEg, QueenValueEg, FersValueEg, AlfilValueEg,
+    FersAlfilValueEg, SilverValueEg, AiwokValueEg, BersValueEg, ArchbishopValueEg, ChancellorValueEg, AmazonValueEg, KnibisValueEg,
+    BiskniValueEg, KnirooValueEg, RookniValueEg, ShogiPawnValueEg, LanceValueEg, ShogiKnightValueEg, GoldValueEg, DragonHorseValueEg,
+    ClobberPieceValueEg, BreakthroughPieceValueEg, ImmobilePieceValueEg, CannonPieceValueEg, JanggiCannonPieceValueEg, SoldierValueEg, HorseValueEg, ElephantValueEg,
+    JanggiElephantValueEg, BannerValueEg, WazirValueEg, CommonerValueEg, CentaurValueEg, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO,
+    VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO,
+    VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO,
+    VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO,
+
+    VALUE_ZERO, PawnValueEg, KnightValueEg, BishopValueEg, RookValueEg, QueenValueEg, FersValueEg, AlfilValueEg,
+    FersAlfilValueEg, SilverValueEg, AiwokValueEg, BersValueEg, ArchbishopValueEg, ChancellorValueEg, AmazonValueEg, KnibisValueEg,
+    BiskniValueEg, KnirooValueEg, RookniValueEg, ShogiPawnValueEg, LanceValueEg, ShogiKnightValueEg, GoldValueEg, DragonHorseValueEg,
+    ClobberPieceValueEg, BreakthroughPieceValueEg, ImmobilePieceValueEg, CannonPieceValueEg, JanggiCannonPieceValueEg, SoldierValueEg, HorseValueEg, ElephantValueEg,
+    JanggiElephantValueEg, BannerValueEg, WazirValueEg, CommonerValueEg, CentaurValueEg, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO,
+    VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO,
+    VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO,
+    VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO, VALUE_ZERO,
+  },
+};
 
 
 namespace
@@ -108,6 +152,23 @@ constexpr Score PBonus[RANK_NB][FILE_NB] =
    { S( -7, -1), S(  6,-14), S( -2, 13), S(-11, 22), S(  4, 24), S(-14, 17), S( 10,  7), S( -9,  7) }
   };
 
+// Estimate piece value
+Value piece_value(Phase phase, PieceType pt)
+{
+    const PieceInfo* pi = pieceMap.find(pt)->second;
+    int v0 =  (phase == MG ?  55 :  60) * pi->steps[MODALITY_CAPTURE].size()
+            + (phase == MG ?  30 :  40) * pi->steps[MODALITY_QUIET].size()
+            + (phase == MG ? 185 : 180) * pi->slider[MODALITY_CAPTURE].size()
+            + (phase == MG ?  55 :  50) * pi->slider[MODALITY_QUIET].size()
+            // Hoppers are more useful with more pieces on the board
+            + (phase == MG ? 100 :  80) * pi->hopper[MODALITY_CAPTURE].size()
+            + (phase == MG ?  80 :  60) * pi->hopper[MODALITY_QUIET].size()
+            // Rook sliding directions are more valuable, especially in endgame
+            + (phase == MG ?  10 :  30) * std::count_if(pi->slider[MODALITY_CAPTURE].begin(), pi->slider[MODALITY_CAPTURE].end(), [](const std::pair<const Direction, int>& d) { return std::abs(d.first) == NORTH || std::abs(d.first) == 1; })
+            + (phase == MG ?  30 :  45) * std::count_if(pi->slider[MODALITY_QUIET].begin(), pi->slider[MODALITY_QUIET].end(), [](const std::pair<const Direction, int>& d) { return std::abs(d.first) == NORTH || std::abs(d.first) == 1; });
+    return Value(v0 * exp(double(v0) / 10000));
+}
+
 } // namespace
 
 
@@ -123,8 +184,16 @@ void init(const Variant* v) {
 
   PieceType strongestPiece = NO_PIECE_TYPE;
   for (PieceType pt : v->pieceTypes)
+  {
+      if (is_custom(pt))
+      {
+          PieceValue[MG][pt] = piece_value(MG, pt);
+          PieceValue[EG][pt] = piece_value(EG, pt);
+      }
+
       if (PieceValue[MG][pt] > PieceValue[MG][strongestPiece])
           strongestPiece = pt;
+  }
 
   Value maxPromotion = VALUE_ZERO;
   for (PieceType pt : v->promotionPieceTypes)
@@ -141,66 +210,80 @@ void init(const Variant* v) {
       {
           score -= make_score(0, (QueenValueEg - maxPromotion) / 100);
           if (v->blastOnCapture)
-              score += score * 3 / 2;
+              score += make_score(mg_value(score) * 3 / 2, eg_value(score));
       }
+      
+      const PieceInfo* pi = pieceMap.find(pt)->second;
+      bool isSlider = pi->slider[MODALITY_QUIET].size() || pi->slider[MODALITY_CAPTURE].size() || pi->hopper[MODALITY_QUIET].size() || pi->hopper[MODALITY_CAPTURE].size();
+      bool isPawn = !isSlider && pi->steps[MODALITY_QUIET].size() && !std::any_of(pi->steps[MODALITY_QUIET].begin(), pi->steps[MODALITY_QUIET].end(), [](const std::pair<const Direction, int>& d) { return d.first < SOUTH / 2; });
+      bool isSlowLeaper = !isSlider && !std::any_of(pi->steps[MODALITY_QUIET].begin(), pi->steps[MODALITY_QUIET].end(), [](const std::pair<const Direction, int>& d) { return dist(d.first) > 1; });
 
       // Scale slider piece values with board size
-      const PieceInfo* pi = pieceMap.find(pt)->second;
-      bool isSlider = pi->sliderQuiet.size() || pi->sliderCapture.size() || pi->hopperQuiet.size() || pi->hopperCapture.size();
-      bool isPawn = !isSlider && pi->stepsQuiet.size() && !std::any_of(pi->stepsQuiet.begin(), pi->stepsQuiet.end(), [](Direction d) { return d < SOUTH / 2; });
-      bool isSlowLeaper = !isSlider && !std::any_of(pi->stepsQuiet.begin(), pi->stepsQuiet.end(), [](Direction d) { return dist(d) > 1; });
-
       if (isSlider)
       {
           constexpr int lc = 5;
           constexpr int rm = 5;
           constexpr int r0 = rm + RANK_8;
           int r1 = rm + (v->maxRank + v->maxFile - 2 * v->capturesToHand) / 2;
-          int leaper = pi->stepsQuiet.size() + pi->stepsCapture.size();
-          int slider = pi->sliderQuiet.size() + pi->sliderCapture.size() + pi->hopperQuiet.size() + pi->hopperCapture.size();
+          int leaper = pi->steps[MODALITY_QUIET].size() + pi->steps[MODALITY_CAPTURE].size();
+          int slider = pi->slider[MODALITY_QUIET].size() + pi->slider[MODALITY_CAPTURE].size() + pi->hopper[MODALITY_QUIET].size() + pi->hopper[MODALITY_CAPTURE].size();
           score = make_score(mg_value(score) * (lc * leaper + r1 * slider) / (lc * leaper + r0 * slider),
                              eg_value(score) * (lc * leaper + r1 * slider) / (lc * leaper + r0 * slider));
       }
 
+      // Piece values saturate earlier in drop variants
+      if (v->capturesToHand || v->twoBoards)
+          score = make_score(mg_value(score) * 7000 / (7000 + mg_value(score)),
+                             eg_value(score) * 7000 / (7000 + eg_value(score)));
+
+      // In variants where checks are prohibited, strong pieces are less mobile, so limit their value 
+      if (!v->checking)
+          score = make_score(std::min(mg_value(score), Value(1800)) / 2,
+                             std::min(eg_value(score), Value(1800)) * 3 / 5);
+
+      // With check counting, strong pieces are even more dangerous
+      else if (v->checkCounting)
+          score = make_score(mg_value(score) * (20000 + mg_value(score)) / 22000,
+                             eg_value(score) * (20000 + eg_value(score)) / 21000);
+
       // Increase leapers' value in makpong
-      if (v->makpongRule)
+      else if (v->makpongRule)
       {
-          if (std::any_of(pi->stepsCapture.begin(), pi->stepsCapture.end(), [](Direction d) { return dist(d) > 1; })
-                  && !pi->lameLeaper)
+          if (std::any_of(pi->steps[MODALITY_CAPTURE].begin(), pi->steps[MODALITY_CAPTURE].end(), [](const std::pair<const Direction, int>& d) { return dist(d.first) > 1 && !d.second; }))
               score = make_score(mg_value(score) * 4200 / (3500 + mg_value(score)),
                                  eg_value(score) * 4700 / (3500 + mg_value(score)));
       }
 
-      // For drop variants, halve the piece values
-      if (v->capturesToHand)
-          score = make_score(mg_value(score) * 7000 / (7000 + mg_value(score)),
-                             eg_value(score) * 7000 / (7000 + eg_value(score)));
-      else if (!v->checking)
-          score = make_score(mg_value(score) * 2000 / (3500 + mg_value(score)),
-                             eg_value(score) * 2700 / (4000 + eg_value(score)));
-      else if (v->twoBoards)
-          score = make_score(mg_value(score) * 7000 / (7000 + mg_value(score)),
-                             eg_value(score) * 7000 / (7000 + eg_value(score)));
-      else if (v->blastOnCapture)
+      // Adjust piece values for atomic captures
+      if (v->blastOnCapture)
           score = make_score(mg_value(score) * 7000 / (7000 + mg_value(score)), eg_value(score));
-      else if (v->checkCounting)
-          score = make_score(mg_value(score) * (20000 + mg_value(score)) / 22000,
-                             eg_value(score) * (20000 + eg_value(score)) / 21000);
-      else if (   v->extinctionValue == -VALUE_MATE
-               && v->extinctionPieceCount == 0
-               && v->extinctionPieceTypes.find(ALL_PIECES) != v->extinctionPieceTypes.end())
+
+      // In variants such as horde where all pieces need to be captured, weak pieces such as pawns are more useful
+      if (   v->extinctionValue == -VALUE_MATE
+          && v->extinctionPieceCount == 0
+          && v->extinctionPieceTypes.find(ALL_PIECES) != v->extinctionPieceTypes.end())
           score += make_score(0, std::max(KnightValueEg - PieceValue[EG][pt], VALUE_ZERO) / 20);
-      else if (pt == strongestPiece)
+
+      // The strongest piece of a variant usually has some dominance, such as rooks in Makruk and Xiangqi.
+      // This does not apply to drop variants.
+      if (pt == strongestPiece && !v->capturesToHand)
               score += make_score(std::max(QueenValueMg - PieceValue[MG][pt], VALUE_ZERO) / 20,
                                   std::max(QueenValueEg - PieceValue[EG][pt], VALUE_ZERO) / 20);
+
+      // For antichess variants, use negative piece values
+      if (v->extinctionValue == VALUE_MATE)
+          score = -make_score(mg_value(score) / 8, eg_value(score) / 8 / (1 + !pi->slider[MODALITY_CAPTURE].size()));
+
+      // Override variant piece value
+      if (v->pieceValue[MG][pt])
+          score = make_score(v->pieceValue[MG][pt], eg_value(score));
+      if (v->pieceValue[EG][pt])
+          score = make_score(mg_value(score), v->pieceValue[EG][pt]);
 
       CapturePieceValue[MG][pc] = CapturePieceValue[MG][~pc] = mg_value(score);
       CapturePieceValue[EG][pc] = CapturePieceValue[EG][~pc] = eg_value(score);
 
-      // For antichess variants, use negative piece values
-      if (v->extinctionValue == VALUE_MATE)
-          score = -make_score(mg_value(score) / 8, eg_value(score) / 8 / (1 + !pi->sliderCapture.size()));
-
+      // For drop variants, halve the piece values to compensate for double changes by captures
       if (v->capturesToHand)
           score = score / 2;
 
@@ -226,26 +309,35 @@ void init(const Variant* v) {
           Rank r = rank_of(s);
           psq[ pc][s] = score + (  pt == PAWN  ? PBonus[std::min(r, RANK_8)][std::min(file_of(s), FILE_H)]
                                  : pt == KING  ? KingBonus[std::clamp(Rank(r - pawnRank + 1), RANK_1, RANK_8)][std::min(f, FILE_D)] * (1 + v->capturesToHand)
-                                 : pt <= QUEEN ? Bonus[pc][std::min(r, RANK_8)][std::min(f, FILE_D)]
+                                 : pt <= QUEEN ? Bonus[pc][std::min(r, RANK_8)][std::min(f, FILE_D)] * (1 + v->blastOnCapture)
                                  : pt == HORSE ? Bonus[KNIGHT][std::min(r, RANK_8)][std::min(f, FILE_D)]
+                                 : pt == COMMONER && v->extinctionValue == -VALUE_MATE && v->extinctionPieceTypes.find(COMMONER) != v->extinctionPieceTypes.end() ? KingBonus[std::clamp(Rank(r - pawnRank + 1), RANK_1, RANK_8)][std::min(f, FILE_D)]
                                  : isSlider    ? make_score(5, 5) * (2 * f + std::max(std::min(r, Rank(v->maxRank - r)), RANK_1) - v->maxFile - 1)
                                  : isPawn      ? make_score(5, 5) * (2 * f - v->maxFile)
                                                : make_score(10, 10) * (1 + isSlowLeaper) * (f + std::max(std::min(r, Rank(v->maxRank - r)), RANK_1) - v->maxFile / 2));
+          // Add a penalty for unpromoted soldiers
           if (pt == SOLDIER && r < v->soldierPromotionRank)
               psq[pc][s] -= score * (v->soldierPromotionRank - r) / (4 + f);
+          // Corners are valuable in reversi
           if (v->enclosingDrop == REVERSI)
           {
               if (f == FILE_A && (r == RANK_1 || r == v->maxRank))
                   psq[pc][s] += make_score(1000, 1000);
           }
+          // In atomic variants pieces are "self-defending" and should therefore be pushed forward
           if (v->blastOnCapture)
               psq[pc][s] += make_score(40, 0) * (r - v->maxRank / 2);
+          // Safe king squares
+          if (r == RANK_1 && f <= FILE_B && ((pt == KING && v->checkCounting) || (pt == COMMONER && v->blastOnCapture)))
+              psq[pc][s] += make_score(100, 0);
           psq[~pc][rank_of(s) <= v->maxRank ? flip_rank(s, v->maxRank) : s] = -psq[pc][s];
       }
-      // pieces in pocket
+      // Pieces in hand
       psq[ pc][SQ_NONE] = score + make_score(35, 10) * (1 + !isSlider);
       psq[~pc][SQ_NONE] = -psq[pc][SQ_NONE];
   }
 }
 
 } // namespace PSQT
+
+} // namespace Stockfish

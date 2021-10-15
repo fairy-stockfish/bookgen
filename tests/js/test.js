@@ -110,6 +110,9 @@ describe('board.numberLegalMoves()', function () {
     const board = new ffish.Board("crazyhouse", "r1b3nr/pppp1kpp/2n5/2b1p3/4P3/2N5/PPPP1PPP/R1B1K1NR/QPbq w KQ - 0 7");
     chai.expect(board.numberLegalMoves()).to.equal(90);
     board.delete();
+    const yariboard = new ffish.Board("yarishogi");
+    chai.expect(yariboard.numberLegalMoves()).to.equal(20);
+    yariboard.delete();
   });
 });
 
@@ -194,6 +197,15 @@ describe('board.fen()', function () {
     let board = new ffish.Board();
     chai.expect(board.fen()).to.equal("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
     board.delete();
+  });
+});
+
+describe('board.fen(showPromoted, countStarted)', function () {
+  it("it returns the current position in fen format. showPromoted makes promoted pieces always followed by the symbol ~ regardless of variant. countStarted overwrites the start of makruk's board honor counting.", () => {
+    let board = new ffish.Board("makruk", "8/6ks/3M~2r1/2K1M3/8/3R4/8/8 w - 128 18 50");
+    chai.expect(board.fen(true, 0)).to.equal("8/6ks/3M~2r1/2K1M3/8/3R4/8/8 w - 128 18 50");
+    chai.expect(board.fen(true, -1)).to.equal("8/6ks/3M~2r1/2K1M3/8/3R4/8/8 w - 128 0 50");
+    chai.expect(board.fen(true, 89)).to.equal("8/6ks/3M~2r1/2K1M3/8/3R4/8/8 w - 128 10 50");
   });
 });
 
@@ -318,16 +330,141 @@ describe('board.gamePly()', function () {
   });
 });
 
+describe('board.hasInsufficientMaterial(side)', function () {
+  it("it returns if the given side has insufficient mating material", () => {
+    let board = new ffish.Board();
+    chai.expect(board.hasInsufficientMaterial(true)).to.equal(false);
+    chai.expect(board.hasInsufficientMaterial(false)).to.equal(false);
+    board.setFen("8/5k2/8/8/8/2K5/6R1/8 w - - 0 1");
+    chai.expect(board.hasInsufficientMaterial(true)).to.equal(false);
+    chai.expect(board.hasInsufficientMaterial(false)).to.equal(true);
+    board.setFen("8/5k2/8/8/8/2K5/6q1/8 w - - 0 1");
+    chai.expect(board.hasInsufficientMaterial(true)).to.equal(true);
+    chai.expect(board.hasInsufficientMaterial(false)).to.equal(false);
+    board.setFen("8/5k2/8/8/8/2K5/6B1/8 w - - 0 1");
+    chai.expect(board.hasInsufficientMaterial(true)).to.equal(true);
+    chai.expect(board.hasInsufficientMaterial(false)).to.equal(true);
+    board.delete();
+  });
+});
+
+describe('board.isInsufficientMaterial()', function () {
+  it("it returns if the game is drawn due to insufficient material", () => {
+    let board = new ffish.Board();
+    chai.expect(board.isInsufficientMaterial()).to.equal(false);
+    board.setFen("8/5k2/8/8/8/2K5/6R1/8 w - - 0 1");
+    chai.expect(board.isInsufficientMaterial()).to.equal(false);
+    board.setFen("8/5k2/8/8/8/2K5/6q1/8 w - - 0 1");
+    chai.expect(board.isInsufficientMaterial()).to.equal(false);
+    board.setFen("8/5k2/8/8/8/2K5/6B1/8 w - - 0 1");
+    chai.expect(board.isInsufficientMaterial()).to.equal(true);
+    board.delete();
+  });
+});
+
 describe('board.isGameOver()', function () {
-  it("it checks if the game is over based on the number of legal moves", () => {
+  it("it checks if the game is over", () => {
+    // No legal moves
     let board = new ffish.Board();
     chai.expect(board.isGameOver()).to.equal(false);
     board.setFen("r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4");
     board.pushSan("Qxf7#");
     chai.expect(board.isGameOver()).to.equal(true);
+
+    // Insufficient material
+    board.setFen("3Rk3/8/8/8/8/8/2N5/3K4 b - - 0 1");
+    chai.expect(board.isGameOver()).to.equal(false);
+    board.pushSan("Kxd8");
+    chai.expect(board.isGameOver()).to.equal(true);
+
+    // Optional draw claimed
+    board.reset();
+    board.pushSanMoves("Nf3 Nc6 Ng1 Nb8 Nf3 Nc6 Ng1");
+    chai.expect(board.isGameOver(false)).to.equal(false);
+    chai.expect(board.isGameOver(true)).to.equal(false);
+    board.pushSan("Nb8");
+    chai.expect(board.isGameOver(false)).to.equal(false);
+    chai.expect(board.isGameOver(true)).to.equal(true);
     board.delete();
   });
 });
+
+describe('board.result()', function () {
+  it("it returns a string representing the winner of the game", () => {
+    // Scholar's mate (win for white)
+    let board = new ffish.Board();
+    chai.expect(board.result()).to.equal("*");
+    board.pushSanMoves("e4 e5 Bc4 Nc6 Qh5 Nf6");
+    chai.expect(board.result()).to.equal("*");
+    board.pushSan("Qxf7#");
+    chai.expect(board.result()).to.equal("1-0");
+
+    // Fool's mate (win for black)
+    board.reset();
+    board.pushSanMoves("f3 e5 g4");
+    chai.expect(board.result()).to.equal("*");
+    board.pushSan("Qh4#");
+    chai.expect(board.result()).to.equal("0-1");
+
+    // Stalemate
+    board.setFen("2Q2bnr/4p1pq/5pkr/7p/7P/4P3/PPPP1PP1/RNB1KBNR w KQ - 1 10");
+    chai.expect(board.result()).to.equal("*");
+    board.pushSan("Qe6");
+    chai.expect(board.result()).to.equal("1/2-1/2");
+
+    // Draw claimed by n-fold repetition
+    board.reset();
+    board.pushSanMoves("Nf3 Nc6 Ng1 Nb8 Nf3 Nc6 Ng1");
+    chai.expect(board.result(false)).to.equal("*");
+    chai.expect(board.result(true)).to.equal("*");
+    board.pushSan("Nb8");
+    chai.expect(board.result(false)).to.equal("*");
+    chai.expect(board.result(true)).to.equal("1/2-1/2");
+
+    // Draw claimed by n-move rule
+    board.setFen("rnbqkbn1/ppppppp1/6r1/7p/2R4P/8/PPPPPPP1/RNBQKBN1 b Qq - 99 51");
+    chai.expect(board.result(false)).to.equal("*");
+    chai.expect(board.result(true)).to.equal("*");
+    board.pushSan("Rh6");
+    chai.expect(board.result(false)).to.equal("*");
+    chai.expect(board.result(true)).to.equal("1/2-1/2");
+
+    // Insufficient material
+    board.setFen("3Rk3/8/8/8/8/8/2N5/3K4 b - - 0 1");
+    chai.expect(board.result()).to.equal("*");
+    board.pushSan("Kxd8");
+    chai.expect(board.result()).to.equal("1/2-1/2");
+
+    // Insufficient material with material counting - black draw odds (armageddon)
+    board.delete();
+    board = new ffish.Board("armageddon");
+    board.setFen("3Rk3/8/8/8/8/8/2N5/3K4 b - - 0 1");
+    chai.expect(board.result()).to.equal("*");
+    board.pushSan("Kxd8");
+    chai.expect(board.result()).to.equal("0-1");
+
+    // Stalemate with material counting - black draw odds (armageddon)
+    board.setFen("2Q2bnr/4p1pq/5pkr/7p/7P/4P3/PPPP1PP1/RNB1KBNR w KQ - 1 10");
+    chai.expect(board.result()).to.equal("*");
+    board.pushSan("Qe6");
+    chai.expect(board.result()).to.equal("0-1");
+
+    // Atomic chess exploded king (variant ending)
+    board.delete();
+    board = new ffish.Board("atomic");
+    board.pushMoves("e2e4 e7e5 d1h5 a7a6");
+    chai.expect(board.result()).to.equal("*");
+    board.push("h5f7");
+    chai.expect(board.result()).to.equal("1-0");
+
+    // Exploded king AND insufficient material - exploded king takes priority
+    board.setFen("3qk3/8/8/8/8/8/8/3QK3 w - - 0 1");
+    chai.expect(board.result()).to.equal("*");
+    board.push("d1d8");
+    chai.expect(board.result()).to.equal("1-0");
+    board.delete();
+  })
+})
 
 describe('board.isCheck()', function () {
   it("it checks if a player is in check", () => {
@@ -457,7 +594,7 @@ describe('board.toVerboseString()', function () {
                                                   "   a   b   c   d   e   f   g   h\n\n" +
                                                   "Fen: rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 3\n" +
                                                   "Sfen: rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR b - 5\n" +
-                                                  "Key: AE7D48F19DB356CD\nCheckers: ")
+                                                  "Key: 39B6F80E84D75BFB\nCheckers: ")
     board.delete();
     const board2 = new ffish.Board("xiangqi");
     chai.expect(board2.toVerboseString()).to.equal("\n +---+---+---+---+---+---+---+---+---+\n" +
@@ -484,7 +621,7 @@ describe('board.toVerboseString()', function () {
                                                    "   a   b   c   d   e   f   g   h   i\n\n" +
                                                    "Fen: rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR w - - 0 1\n" +
                                                    "Sfen: rnbakabnr/9/1c5c1/p1p1p1p1p/9/9/P1P1P1P1P/1C5C1/9/RNBAKABNR b - 1\n" +
-                                                   "Key: 1FBADA178B89E4C3\nCheckers: ");
+                                                   "Key: CF494C075A7D927E\nCheckers: ");
     board2.delete();
   });
 });
@@ -556,19 +693,21 @@ describe('ffish.validateFen(fen, uciVariant)', function () {
       for (let idx = 0; idx < variants.length; ++idx) {
         const variant = variants[idx];
         const startFen = ffish.startingFen(variant);
-        chai.expect(ffish.validateFen(startFen, variant)).to.equal(1);
+        chai.expect(ffish.validateFen(startFen, variant)).to.equal(1, "Invalid start FEN for " + variant);
         // check if the FEN is still valid if board.fen() is returned
         const board = new ffish.Board(variant);
         chai.expect(ffish.validateFen(board.fen(), variant)).to.equal(1);
         board.delete();
       }
-      // alternative pocket piece formulation
+      // alternative or skipped pocket formulation
       chai.expect(ffish.validateFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR/RB w KQkq - 3+3 0 1", "3check-crazyhouse")).to.equal(1);
       chai.expect(ffish.validateFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR/ w KQkq - 3+3 0 1", "3check-crazyhouse")).to.equal(1);
+      chai.expect(ffish.validateFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 3+3 0 1", "3check-crazyhouse")).to.equal(1);
+      chai.expect(ffish.validateFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[-] w KQkq - 3+3 0 1", "3check-crazyhouse")).to.equal(1);
 
       // error id checks
-      chai.expect(ffish.validateFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[]wKQkq-3+301", "3check-crazyhouse")).to.equal(-12);
-      chai.expect(ffish.validateFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] KQkq - 3+3 0 1", "3check-crazyhouse")).to.equal(-11);
+      chai.expect(ffish.validateFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[]wKQkq-3+301", "3check-crazyhouse")).to.equal(-10);
+      chai.expect(ffish.validateFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] KQkq - 3+3 0 1", "3check-crazyhouse")).to.equal(-6);
       chai.expect(ffish.validateFen("rnbqkbnr/ppppXppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 3+3 0 1", "3check-crazyhouse")).to.equal(-10);
       chai.expect(ffish.validateFen("rnbqkbnr/pppppKpp/8/8/8/8/PPPPPPPP/RNBQ1BNR[] w KQkq - 3+3 0 1", "3check-crazyhouse")).to.equal(-9);
       chai.expect(ffish.validateFen("rnbqkbnr/ppppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 3+3 0 1", "3check-crazyhouse")).to.equal(-8);
@@ -585,6 +724,13 @@ describe('ffish.validateFen(fen, uciVariant)', function () {
       chai.expect(ffish.validateFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 3+3 0 -13", "3check-crazyhouse")).to.equal(-1);
       chai.expect(ffish.validateFen("", "chess")).to.equal(0);
     });
+});
+
+describe('ffish.validateFen(fen, uciVariant, chess960)', function () {
+  it("it validates a given X-FEN and returns +1 if fen is valid. Otherwise an error code will be returned.", () => {
+    chai.expect(ffish.validateFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w AHah - 0 1", "chess", true)).to.equal(1);
+    chai.expect(ffish.validateFen("nrbqbkrn/pppppppp/8/8/8/8/PPPPPPPP/NRBQBKRN w BGbg - 0 1", "chess", true)).to.equal(1);
+  });
 });
 
 describe('ffish.readGamePGN(pgn)', function () {

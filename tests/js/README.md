@@ -149,7 +149,7 @@ console.log(board.toVerboseString())
 
 Fen: rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 3
 Sfen: rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR b - 5
-Key: AE7D48F19DB356CD
+Key: 39B6F80E84D75BFB
 Checkers:
 ```
 
@@ -278,3 +278,13 @@ npm install
 ```bash
 node index.js
 ```
+
+## Example Projects
+
+### ffish-test
+
+A simple toy website which demonstrates the core functionality of ffish.js and [chessgroundx](https://github.com/gbtami/chessgroundx).
+
+Source code: https://github.com/thearst3rd/ffish-test
+
+See it deployed at: https://ffish-test.herokuapp.com

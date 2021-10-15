@@ -4,7 +4,7 @@
 src/.depend
 
 # Built binary
-src/bookgen*
+src/stockfish*
 src/-lstdc++.res
 
 # Neural network for the NNUE evaluation

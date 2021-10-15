@@ -17,12 +17,12 @@ jobs:
         run: sudo apt install mingw-w64
 
       - name: make default
-        run: cd src && make clean && make -j build COMP=mingw ARCH=x86-64 EXE=fairy-stockfish_x86-64.exe && strip fairy-stockfish_x86-64.exe
+        run: cd src && make clean && make -j build COMP=mingw ARCH=x86-64 EXE=bookgen_x86-64.exe && strip bookgen_x86-64.exe
 
       - name: make largeboards
-        run: cd src && make clean && make -j build COMP=mingw ARCH=x86-64 EXE=fairy-stockfish-largeboards_x86-64.exe largeboards=yes && strip fairy-stockfish-largeboards_x86-64.exe
+        run: cd src && make clean && make -j build COMP=mingw ARCH=x86-64 EXE=bookgen-largeboards_x86-64.exe largeboards=yes && strip bookgen-largeboards_x86-64.exe
 
       - uses: actions/upload-artifact@v2
         with:
-          name: fairy-stockfish
-          path: src/fairy-stockfish*.exe
+          name: bookgen
+          path: src/bookgen*.exe

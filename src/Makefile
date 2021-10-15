@@ -21,9 +21,9 @@
 
 ### Executable name
 ifeq ($(COMP),mingw)
-EXE = bookgen.exe
+EXE = stockfish.exe
 else
-EXE = bookgen
+EXE = stockfish
 endif
 
 ### Installation dir definitions

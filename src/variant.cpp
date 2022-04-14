@@ -1,6 +1,6 @@
 /*
   Fairy-Stockfish, a UCI chess variant playing engine derived from Stockfish
-  Copyright (C) 2018-2021 Fabian Fichter
+  Copyright (C) 2018-2022 Fabian Fichter
 
   Fairy-Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -512,7 +512,6 @@ namespace {
         v->whiteDropRegion = Rank1BB | Rank2BB | Rank3BB;
         v->blackDropRegion = Rank8BB | Rank7BB | Rank6BB;
         v->sittuyinRookDrop = true;
-        v->promotionRank = RANK_1; // no regular promotions
         v->sittuyinPromotion = true;
         v->promotionLimit[FERS] = 1;
         v->immobilityIllegal = false;
@@ -1484,8 +1483,13 @@ void VariantMap::parse_istream(std::istream& file) {
         while (file.peek() != '[' && std::getline(file, input))
         {
             std::stringstream ss(input);
-            if (ss.peek() != '#' && std::getline(std::getline(ss, key, '=') >> std::ws, value) && !key.empty())
-                attribs[key.erase(key.find_last_not_of(" ") + 1)] = value;
+            if (ss.peek() != ';' && ss.peek() != '#')
+            {
+                if (DoCheck && !input.empty() && input.find('=') == std::string::npos)
+                    std::cerr << "Invalid sytax: '" << input << "'." << std::endl;
+                if (std::getline(std::getline(ss, key, '=') >> std::ws, value) && !key.empty())
+                    attribs[key.erase(key.find_last_not_of(" ") + 1)] = value;
+            }
         }
 
         // Create variant

@@ -476,6 +476,17 @@ describe('board.isCheck()', function () {
     board.pushSan("Qxf7#");
     chai.expect(board.isCheck()).to.equal(true);
     board.delete();
+
+    board = new ffish.Board("atomic");
+    chai.expect(board.isCheck()).to.equal(false);
+    board.setFen("rnbqkbnr/ppp1pppp/8/1B1p4/4P3/8/PPPP1PPP/RNBQK1NR b KQkq - 3 2");
+    chai.expect(board.isCheck()).to.equal(true);
+    board.setFen("rnbqkbnr/ppp2ppp/8/8/8/8/PPP2PPP/RNBQKBNR w KQkq - 0 4");
+    board.pushSan("Qd7");
+    chai.expect(board.isCheck()).to.equal(true);
+    board.setFen("8/8/kK6/8/8/8/Q7/8 b - - 0 1")
+    chai.expect(board.isCheck()).to.equal(false);
+    board.delete();
   });
 });
 
@@ -741,7 +752,7 @@ describe('ffish.readGamePGN(pgn)', function () {
      let expectedFens = ["1r6/5kp1/RqQb1p1p/1p1PpP2/1Pp1B3/2P4P/6P1/5K2 b - - 14 45",
                          "3r2kr/2pb1Q2/4ppp1/3pN2p/1P1P4/3PbP2/P1P3PP/6NK[PPqrrbbnn] b - - 1 37",
                          "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
-                         "r1bQkb1r/ppp1pppp/2P5/2n2q2/8/2N2N2/PPP2PPP/R1BEKB1R[Hh] b KQACEFHkqacefh - 0 8",
+                         "r1bQkb1r/ppp1pppp/2P5/2n2q2/8/2N2N2/PPP2PPP/R1BEKB1R[Hh] b KQCFkqcf - 0 8",
                          "5rk1/4p3/2p3rR/2p1P3/2Pp1B2/1P1P2P1/2N1n3/6K1 w - - 1 44"]
 
      for (let idx = 0; idx < pgnFiles.length; ++idx) {

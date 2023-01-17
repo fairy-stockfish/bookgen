@@ -90,6 +90,7 @@ namespace {
 
     template <> bool set(const std::string& value, CountingRule& target) {
         target =  value == "makruk"  ? MAKRUK_COUNTING
+                : value == "cambodian" ? CAMBODIAN_COUNTING
                 : value == "asean" ? ASEAN_COUNTING
                 : NO_COUNTING;
         return value == "makruk" || value == "asean" || value == "none";
@@ -292,6 +293,7 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("mandatoryPiecePromotion", v->mandatoryPiecePromotion);
     parse_attribute("pieceDemotion", v->pieceDemotion);
     parse_attribute("blastOnCapture", v->blastOnCapture);
+    parse_attribute("petrifyOnCapture", v->petrifyOnCapture);
     parse_attribute("doubleStep", v->doubleStep);
     parse_attribute("doubleStepRank", v->doubleStepRank);
     parse_attribute("doubleStepRankMin", v->doubleStepRankMin);
@@ -327,6 +329,7 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("immobilityIllegal", v->immobilityIllegal);
     parse_attribute("gating", v->gating);
     parse_attribute("arrowGating", v->arrowGating);
+    parse_attribute("duckGating", v->duckGating);
     parse_attribute("seirawanGating", v->seirawanGating);
     parse_attribute("cambodianMoves", v->cambodianMoves);
     parse_attribute("diagonalLines", v->diagonalLines);
@@ -377,8 +380,6 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("materialCounting", v->materialCounting);
     parse_attribute("countingRule", v->countingRule);
 
-    v->conclude(); // In preparation for the consistency checks below, in case conclude() hasn't been called yet.
-
     // Report invalid options
     if (DoCheck)
     {
@@ -397,6 +398,8 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
                 if (std::count(v->pieceToChar.begin(), v->pieceToChar.end(), v->pieceToChar[make_piece(c, pt)]) != 1)
                     std::cerr << piece_name(pt) << " - Ambiguous piece character: " << v->pieceToChar[make_piece(c, pt)] << std::endl;
         }
+
+        v->conclude(); // In preparation for the consistency checks below
 
         // startFen
         if (FEN::validate_fen(v->startFen, v, v->chess960) != FEN::FEN_OK)
@@ -433,7 +436,8 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
             std::cerr << "Inconsistent settings: castlingQueensideFile > castlingKingsideFile." << std::endl;
 
         // Check for limitations
-
+        if (v->pieceDrops && (v->arrowGating || v->duckGating))
+            std::cerr << "pieceDrops and arrowGating/duckGating are incompatible." << std::endl;
         // Options incompatible with royal kings
         if (v->pieceTypes.find(KING) != v->pieceTypes.end())
         {
@@ -441,6 +445,8 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
                 std::cerr << "Can not use kings with blastOnCapture." << std::endl;
             if (v->flipEnclosedPieces)
                 std::cerr << "Can not use kings with flipEnclosedPieces." << std::endl;
+            if (v->duckGating)
+                std::cerr << "Can not use kings with duckGating." << std::endl;
             // We can not fully check support for custom king movements at this point,
             // since custom pieces are only initialized on loading of the variant.
             // We will assume this is valid, but it might cause problems later if it's not.

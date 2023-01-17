@@ -54,6 +54,7 @@ struct StateInfo {
   CheckCount checksRemaining[COLOR_NB];
   Square epSquare;
   Square castlingKingSquare[COLOR_NB];
+  Bitboard wallSquares;
   Bitboard gatesBB[COLOR_NB];
 
   // Not copied when making a move (will be recomputed anyhow)
@@ -171,7 +172,7 @@ public:
   PieceType drop_no_doubled() const;
   bool immobility_illegal() const;
   bool gating() const;
-  bool arrow_gating() const;
+  bool wall_gating() const;
   bool seirawan_gating() const;
   bool cambodian_moves() const;
   Bitboard diagonal_lines() const;
@@ -301,7 +302,10 @@ public:
   bool has_game_cycle(int ply) const;
   bool has_repeated() const;
   Bitboard chased() const;
-  int counting_limit() const;
+  int count_limit(Color sideToCount) const;
+  int board_honor_counting_ply(int countStarted) const;
+  bool board_honor_counting_shorter(int countStarted) const;
+  int counting_limit(int countStarted) const;
   int counting_ply(int countStarted) const;
   int rule50_count() const;
   Score psq_score() const;
@@ -391,7 +395,7 @@ inline bool Position::two_boards() const {
 
 inline Bitboard Position::board_bb() const {
   assert(var != nullptr);
-  return board_size_bb(var->maxFile, var->maxRank);
+  return board_size_bb(var->maxFile, var->maxRank) & ~st->wallSquares;
 }
 
 inline Bitboard Position::board_bb(Color c, PieceType pt) const {
@@ -720,9 +724,9 @@ inline bool Position::gating() const {
   return var->gating;
 }
 
-inline bool Position::arrow_gating() const {
+inline bool Position::wall_gating() const {
   assert(var != nullptr);
-  return var->arrowGating;
+  return var->arrowGating || var->duckGating;
 }
 
 inline bool Position::seirawan_gating() const {
@@ -1180,8 +1184,24 @@ inline int Position::game_ply() const {
   return gamePly;
 }
 
+inline int Position::board_honor_counting_ply(int countStarted) const {
+  return countStarted == 0 ?
+      st->countingPly :
+      countStarted < 0 ? 0 : std::max(1 + gamePly - countStarted, 0);
+}
+
+inline bool Position::board_honor_counting_shorter(int countStarted) const {
+  return counting_rule() == CAMBODIAN_COUNTING && 126 - board_honor_counting_ply(countStarted) < st->countingLimit - st->countingPly;
+}
+
+inline int Position::counting_limit(int countStarted) const {
+  return board_honor_counting_shorter(countStarted) ? 126 : st->countingLimit;
+}
+
 inline int Position::counting_ply(int countStarted) const {
-  return countStarted == 0 || (count<ALL_PIECES>(WHITE) <= 1 || count<ALL_PIECES>(BLACK) <= 1) ? st->countingPly : countStarted < 0 ? 0 : std::min(st->countingPly, std::max(1 + gamePly - countStarted, 0));
+  return !count<PAWN>() && (count<ALL_PIECES>(WHITE) <= 1 || count<ALL_PIECES>(BLACK) <= 1) && !board_honor_counting_shorter(countStarted) ?
+      st->countingPly :
+      board_honor_counting_ply(countStarted);
 }
 
 inline int Position::rule50_count() const {

@@ -469,6 +469,11 @@ namespace ffish {
     Board::sfInitialized = true;
   }
 
+  bool captures_to_hand(std::string uciVariant) {
+    const Variant* v = get_variant(uciVariant);
+    return v->capturesToHand;
+  }
+
   std::string starting_fen(std::string uciVariant) {
     const Variant* v = get_variant(uciVariant);
     return v->startFen;
@@ -715,7 +720,9 @@ EMSCRIPTEN_BINDINGS(ffish_js) {
     .value("SHOGI_HODGES", NOTATION_SHOGI_HODGES)
     .value("SHOGI_HODGES_NUMBER", NOTATION_SHOGI_HODGES_NUMBER)
     .value("JANGGI", NOTATION_JANGGI)
-    .value("XIANGQI_WXF", NOTATION_XIANGQI_WXF);
+    .value("XIANGQI_WXF", NOTATION_XIANGQI_WXF)
+    .value("THAI_SAN", NOTATION_THAI_SAN)
+    .value("THAI_LAN", NOTATION_THAI_LAN);
   // usage: e.g. ffish.Termination.CHECKMATE
   enum_<Termination>("Termination")
     .value("ONGOING", ONGOING)
@@ -732,6 +739,7 @@ EMSCRIPTEN_BINDINGS(ffish_js) {
   function("readGamePGN", &read_game_pgn);
   function("variants", &ffish::available_variants);
   function("loadVariantConfig", &ffish::load_variant_config);
+  function("capturesToHand", &ffish::captures_to_hand);
   function("startingFen", &ffish::starting_fen);
   function("validateFen", select_overload<int(std::string)>(&ffish::validate_fen));
   function("validateFen", select_overload<int(std::string, std::string)>(&ffish::validate_fen));

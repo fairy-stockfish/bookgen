@@ -228,7 +228,7 @@ constexpr int SQUARE_BITS = 6;
 #endif
 
 #ifdef ALLVARS
-constexpr int MAX_MOVES = 4096;
+constexpr int MAX_MOVES = 8192;
 #else
 constexpr int MAX_MOVES = 1024;
 #endif
@@ -293,7 +293,7 @@ enum MaterialCounting {
 };
 
 enum CountingRule {
-  NO_COUNTING, MAKRUK_COUNTING, ASEAN_COUNTING
+  NO_COUNTING, MAKRUK_COUNTING, CAMBODIAN_COUNTING, ASEAN_COUNTING
 };
 
 enum ChasingRule {

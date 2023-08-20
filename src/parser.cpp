@@ -172,7 +172,7 @@ template <bool Current, class T> bool VariantParser<DoCheck>::parse_attribute(co
     {
         target = T();
         char token;
-        size_t idx;
+        size_t idx = std::string::npos;
         std::stringstream ss(it->second);
         while (ss >> token && (idx = token == '*' ? size_t(ALL_PIECES) : pieceToChar.find(toupper(token))) != std::string::npos)
             set(PieceType(idx), target);
@@ -378,6 +378,8 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("castlingKingPiece", v->castlingKingPiece[BLACK], v->pieceToChar);
     parse_attribute("castlingKingPieceWhite", v->castlingKingPiece[WHITE], v->pieceToChar);
     parse_attribute("castlingKingPieceBlack", v->castlingKingPiece[BLACK], v->pieceToChar);
+    parse_attribute("castlingRookKingsideFile", v->castlingRookKingsideFile);
+    parse_attribute("castlingRookQueensideFile", v->castlingRookQueensideFile);
     parse_attribute("castlingRookPieces", v->castlingRookPieces[WHITE], v->pieceToChar);
     parse_attribute("castlingRookPieces", v->castlingRookPieces[BLACK], v->pieceToChar);
     parse_attribute("castlingRookPiecesWhite", v->castlingRookPieces[WHITE], v->pieceToChar);
@@ -444,12 +446,22 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("extinctionPieceTypes", v->extinctionPieceTypes, v->pieceToChar);
     parse_attribute("extinctionPieceCount", v->extinctionPieceCount);
     parse_attribute("extinctionOpponentPieceCount", v->extinctionOpponentPieceCount);
-    parse_attribute("flagPiece", v->flagPiece, v->pieceToChar);
+    parse_attribute("flagPiece", v->flagPiece[WHITE], v->pieceToChar);
+    parse_attribute("flagPiece", v->flagPiece[BLACK], v->pieceToChar);
+    parse_attribute("flagPieceWhite", v->flagPiece[WHITE], v->pieceToChar);
+    parse_attribute("flagPieceBlack", v->flagPiece[BLACK], v->pieceToChar);
+    parse_attribute("flagRegion", v->flagRegion[WHITE]);
+    parse_attribute("flagRegion", v->flagRegion[BLACK]);
     parse_attribute("flagRegionWhite", v->flagRegion[WHITE]);
     parse_attribute("flagRegionBlack", v->flagRegion[BLACK]);
+    parse_attribute("flagPieceCount", v->flagPieceCount);
+    parse_attribute("flagPieceBlockedWin", v->flagPieceBlockedWin);
     parse_attribute("flagMove", v->flagMove);
     parse_attribute("checkCounting", v->checkCounting);
     parse_attribute("connectN", v->connectN);
+    parse_attribute("connectHorizontal", v->connectHorizontal);
+    parse_attribute("connectVertical", v->connectVertical);
+    parse_attribute("connectDiagonal", v->connectDiagonal);
     parse_attribute("materialCounting", v->materialCounting);
     parse_attribute("countingRule", v->countingRule);
 

@@ -114,7 +114,7 @@ namespace {
         int rank;
         std::stringstream ss(value);
         target = 0;
-        while (!ss.eof() && ss >> file && ss >> rank)
+        while (!ss.eof() && ss >> file && file != '-' && ss >> rank)
         {
             if (Rank(rank - 1) > RANK_MAX || (file != '*' && File(tolower(file) - 'a') > FILE_MAX))
                 return false;
@@ -357,7 +357,10 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("mandatoryPiecePromotion", v->mandatoryPiecePromotion);
     parse_attribute("pieceDemotion", v->pieceDemotion);
     parse_attribute("blastOnCapture", v->blastOnCapture);
+    parse_attribute("blastImmuneTypes", v->blastImmuneTypes, v->pieceToChar);
+    parse_attribute("mutuallyImmuneTypes", v->mutuallyImmuneTypes, v->pieceToChar);
     parse_attribute("petrifyOnCapture", v->petrifyOnCapture);
+    parse_attribute("petrifyBlastPieces", v->petrifyBlastPieces);
     parse_attribute("doubleStep", v->doubleStep);
     parse_attribute("doubleStepRegionWhite", v->doubleStepRegion[WHITE]);
     parse_attribute("doubleStepRegionBlack", v->doubleStepRegion[BLACK]);
@@ -523,6 +526,7 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
         // Check for limitations
         if (v->pieceDrops && (v->arrowGating || v->duckGating || v->staticGating || v->pastGating))
             std::cerr << "pieceDrops and arrowGating/duckGating are incompatible." << std::endl;
+
         // Options incompatible with royal kings
         if (v->pieceTypes & KING)
         {
@@ -545,6 +549,17 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
                                    [](const std::pair<const Direction, int>& d) { return d.second; }))
                     std::cerr << piece_name(v->kingType) << " is not supported as kingType." << std::endl;
             }
+        }
+        // Options incompatible with royal kings OR pseudo-royal kings. Possible in theory though:
+        // 1. In blast variants, moving a (pseudo-)royal blastImmuneType into another piece is legal.
+        // 2. In blast variants, capturing a piece next to a (pseudo-)royal blastImmuneType is legal.
+        // 3. Moving a (pseudo-)royal mutuallyImmuneType into a square threatened by the same type is legal.
+        if ((v->extinctionPseudoRoyal) || (v->pieceTypes & KING))
+        {
+            if (v->blastImmuneTypes)
+                std::cerr << "Can not use kings or pseudo-royal with blastImmuneTypes." << std::endl;
+            if (v->mutuallyImmuneTypes)
+                std::cerr << "Can not use kings or pseudo-royal with mutuallyImmuneTypes." << std::endl;
         }
     }
     return v;

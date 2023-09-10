@@ -264,7 +264,8 @@ Position& Position::set(const Variant* v, const string& fenStr, bool isChess960,
 
   ss >> std::noskipws;
 
-  Square sq = SQ_A1 + max_rank() * NORTH;
+  Rank r = max_rank();
+  Square sq = SQ_A1 + r * NORTH;
 
   // 1. Piece placement
   while ((ss >> token) && !isspace(token))
@@ -283,10 +284,18 @@ Position& Position::set(const Variant* v, const string& fenStr, bool isChess960,
 
       else if (token == '/')
       {
-          sq += 2 * SOUTH + (FILE_MAX - max_file()) * EAST;
+          sq = SQ_A1 + --r * NORTH;
           if (!is_ok(sq))
               break;
       }
+
+      // Stop before pieces in hand
+      else if (token == '[')
+          break;
+
+      // Ignore pieces outside the board and wait for next / or [ to return to a valid state
+      else if (!is_ok(sq) || file_of(sq) > max_file() || rank_of(sq) > r)
+          continue;
 
       // Wall square
       else if (token == '*')
@@ -311,10 +320,6 @@ Position& Position::set(const Variant* v, const string& fenStr, bool isChess960,
           put_piece(make_piece(color_of(Piece(idx)), promoted_piece_type(type_of(Piece(idx)))), sq, true, Piece(idx));
           ++sq;
       }
-
-      // Stop before pieces in hand
-      else if (token == '[')
-          break;
   }
   // Pieces in hand
   if (!isspace(token))
@@ -1099,9 +1104,9 @@ bool Position::legal(Move m) const {
   {
       Square kto = to;
       Bitboard occupied = (type_of(m) != DROP ? pieces() ^ from : pieces());
-      if (var->duckGating)
+      if (var->duckWalling)
           occupied ^= st->wallSquares;
-      if (wall_gating() || is_gating(m))
+      if (walling() || is_gating(m))
           occupied |= gating_square(m);
       if (type_of(m) == CASTLING)
       {
@@ -1296,15 +1301,15 @@ bool Position::pseudo_legal(const Move m) const {
                         : MoveList<NON_EVASIONS>(*this).contains(m);
 
   // Illegal wall square placement
-  if (wall_gating() && !((board_bb() & ~((pieces() ^ from) | to)) & gating_square(m)))
+  if (walling() && !((board_bb() & ~((pieces() ^ from) | to)) & gating_square(m)))
       return false;
-  if (var->arrowGating && !(moves_bb(us, type_of(pc), to, pieces() ^ from) & gating_square(m)))
+  if (var->arrowWalling && !(moves_bb(us, type_of(pc), to, pieces() ^ from) & gating_square(m)))
       return false;
-  if (var->pastGating && (from != gating_square(m)))
+  if (var->pastWalling && (from != gating_square(m)))
       return false;
-  if (var->staticGating && !(var->staticGatingRegion & gating_square(m)))
+  if ((var->staticWalling || var->duckWalling) && !(var->wallingRegion[us] & gating_square(m)))
       return false;
-  
+
   // Handle the case where a mandatory piece promotion/demotion is not taken
   if (    mandatory_piece_promotion()
       && (is_promoted(from) ? piece_demotion() : promoted_piece_type(type_of(pc)) != NO_PIECE_TYPE)
@@ -1659,6 +1664,13 @@ void Position::do_move(Move m, StateInfo& newSt, bool givesCheck) {
   {
       k ^= Zobrist::castling[st->castlingRights];
       st->castlingRights &= ~(castlingRightsMask[from] | castlingRightsMask[to]);
+
+      // Remove castling rights from opponent on the same side if oppositeCastling
+      if ((var->oppositeCastling) && (type_of(m) == CASTLING))
+      {
+        bool kingSide = to > from;
+        st->castlingRights &= ~(~us & (kingSide ? KING_SIDE : QUEEN_SIDE));
+      }
       k ^= Zobrist::castling[st->castlingRights];
   }
 
@@ -1675,8 +1687,11 @@ void Position::do_move(Move m, StateInfo& newSt, bool givesCheck) {
       }
       else
       {
-          assert(flip_enclosed_pieces() == ATAXX);
-          st->flippedPieces = PseudoAttacks[us][KING][to] & pieces(~us);
+          assert((flip_enclosed_pieces() == ATAXX) || (flip_enclosed_pieces() == QUADWRANGLE));
+          if ((flip_enclosed_pieces() == ATAXX) || (flip_enclosed_pieces() == QUADWRANGLE && (PseudoAttacks[us][KING][to] & pieces(us) || type_of(m) == NORMAL)))
+          {
+              st->flippedPieces = PseudoAttacks[us][KING][to] & pieces(~us);
+          }
       }
 
       // Flip pieces
@@ -1800,7 +1815,7 @@ void Position::do_move(Move m, StateInfo& newSt, bool givesCheck) {
       {
           if (   (var->enPassantRegion & (to - pawn_push(us)))
               && ((pawn_attacks_bb(us, to - pawn_push(us)) & pieces(them, PAWN)) || var->enPassantTypes[them] & ~piece_set(PAWN))
-              && !(wall_gating() && gating_square(m) == to - pawn_push(us)))
+              && !(walling() && gating_square(m) == to - pawn_push(us)))
           {
               st->epSquares |= to - pawn_push(us);
               k ^= Zobrist::enpassant[file_of(to)];
@@ -1808,7 +1823,7 @@ void Position::do_move(Move m, StateInfo& newSt, bool givesCheck) {
           if (   std::abs(int(to) - int(from)) == 3 * NORTH
               && (var->enPassantRegion & (to - 2 * pawn_push(us)))
               && ((pawn_attacks_bb(us, to - 2 * pawn_push(us)) & pieces(them, PAWN)) || var->enPassantTypes[them] & ~piece_set(PAWN))
-              && !(wall_gating() && gating_square(m) == to - 2 * pawn_push(us)))
+              && !(walling() && gating_square(m) == to - 2 * pawn_push(us)))
           {
               st->epSquares |= to - 2 * pawn_push(us);
               k ^= Zobrist::enpassant[file_of(to)];
@@ -2013,10 +2028,10 @@ void Position::do_move(Move m, StateInfo& newSt, bool givesCheck) {
   }
 
   // Add gated wall square
-  if (wall_gating())
+  if (walling())
   {
-      // Reset wall squares for duck gating
-      if (var->duckGating)
+      // Reset wall squares for duck walling
+      if (var->duckWalling)
       {
           Bitboard b = st->previous->wallSquares;
           byTypeBB[ALL_PIECES] ^= b;
@@ -2454,7 +2469,7 @@ bool Position::see_ge(Move m, Value threshold) const {
           stmAttackers &= ~blockers_for_king(stm);
 
       // Ignore distant sliders
-      if (var->duckGating)
+      if (var->duckWalling)
           stmAttackers &= attacks_bb<KING>(to) | ~(pieces(BISHOP, ROOK) | pieces(QUEEN));
 
       if (!stmAttackers)
@@ -2721,6 +2736,32 @@ bool Position::is_immediate_game_end(Value& result, int ply) const {
           return true;
       }
   }
+
+  // Castle chess
+  if (var->castlingWins)
+  {
+      if (st->pliesFromNull > 0 && type_of(st->move) == CASTLING)
+      {
+          // check for victory first, because castling also removes castling rights.
+          CastlingRights justCastled = ~sideToMove & ((from_sq(st->move) < to_sq(st->move)) ? KING_SIDE : QUEEN_SIDE);
+          if (var->castlingWins & justCastled)
+          {
+              result = mated_in(ply);
+              return true;
+          }
+      }
+      // We check the opponent side first, because a rook capturing a rook could remove both sides castling rights,
+      // which should likely be seen as losing, analogous to extinction rules.
+      for (Color c : { ~sideToMove, sideToMove })
+          if ((c & var->castlingWins) && !(c & var->castlingWins & st->castlingRights))
+          {
+              // player permanently losing castling rights. either through moving a castling piece,
+              // or having their rook captured.
+              result = c == sideToMove ? mated_in(ply) : mate_in(ply);
+              return true;
+          }
+  }
+
   // nCheck
   if (check_counting() && checks_remaining(~sideToMove) == 0)
   {
@@ -2921,7 +2962,7 @@ bool Position::has_game_cycle(int ply) const {
 
   int end = captures_to_hand() ? st->pliesFromNull : std::min(st->rule50, st->pliesFromNull);
 
-  if (end < 3 || var->nFoldValue != VALUE_DRAW || var->perpetualCheckIllegal || var->materialCounting || var->moveRepetitionIllegal || var->duckGating)
+  if (end < 3 || var->nFoldValue != VALUE_DRAW || var->perpetualCheckIllegal || var->materialCounting || var->moveRepetitionIllegal || var->duckWalling)
     return false;
 
   Key originalKey = st->key;

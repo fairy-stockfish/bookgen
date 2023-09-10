@@ -83,6 +83,7 @@ struct Variant {
   File castlingRookKingsideFile = FILE_MAX; // only has to match if rook is not in corner in non-960 variants
   File castlingRookQueensideFile = FILE_A; // only has to match if rook is not in corner in non-960 variants
   PieceSet castlingRookPieces[COLOR_NB] = {piece_set(ROOK), piece_set(ROOK)};
+  bool oppositeCastling = false;
   PieceType kingType = KING;
   bool checking = true;
   bool dropChecks = true;
@@ -106,11 +107,11 @@ struct Variant {
   int dropNoDoubledCount = 1;
   bool immobilityIllegal = false;
   bool gating = false;
-  bool arrowGating = false;
-  bool duckGating = false;
-  bool staticGating = false;
-  bool pastGating = false;
-  Bitboard staticGatingRegion = AllSquares;
+  bool arrowWalling = false;
+  bool duckWalling = false;
+  bool staticWalling = false;
+  bool pastWalling = false;
+  Bitboard wallingRegion[COLOR_NB] = {AllSquares, AllSquares};
   bool seirawanGating = false;
   bool cambodianMoves = false;
   Bitboard diagonalLines = 0;
@@ -156,6 +157,7 @@ struct Variant {
   bool connectDiagonal = true;
   MaterialCounting materialCounting = NO_MATERIAL_COUNTING;
   CountingRule countingRule = NO_COUNTING;
+  CastlingRights castlingWins = NO_CASTLING;
 
   // Derived properties
   bool fastAttacks = true;

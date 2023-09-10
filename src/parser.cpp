@@ -105,8 +105,9 @@ namespace {
     template <> bool set(const std::string& value, EnclosingRule& target) {
         target =  value == "reversi"  ? REVERSI
                 : value == "ataxx" ? ATAXX
+                : value == "quadwrangle" ? QUADWRANGLE
                 : NO_ENCLOSING;
-        return value == "reversi" || value == "ataxx" || value == "none";
+        return value == "reversi" || value == "ataxx" || value == "quadwrangle" || value == "none";
     }
 
     template <> bool set(const std::string& value, Bitboard& target) {
@@ -121,6 +122,27 @@ namespace {
             target |= file == '*' ? rank_bb(Rank(rank - 1)) : square_bb(make_square(File(tolower(file) - 'a'), Rank(rank - 1)));
         }
         return !ss.fail();
+    }
+
+    template <> bool set(const std::string& value, CastlingRights& target) {
+        char c;
+        CastlingRights castlingRight;
+        std::stringstream ss(value);
+        target = NO_CASTLING;
+        bool valid = true;
+        while (ss >> c && c != '-')
+        {
+            castlingRight =  c == 'K' ? WHITE_OO
+                           : c == 'Q' ? WHITE_OOO
+                           : c == 'k' ? BLACK_OO
+                           : c == 'q' ? BLACK_OOO
+                           : NO_CASTLING;
+            if (castlingRight)
+                target = CastlingRights(target | castlingRight);
+            else
+                valid = false;
+        }
+        return valid;
     }
 
     template <typename T> void set(PieceType pt, T& target) {
@@ -157,6 +179,7 @@ template <bool Current, class T> bool VariantParser<DoCheck>::parse_attribute(co
                                   : std::is_same<T, ChasingRule>() ? "ChasingRule"
                                   : std::is_same<T, EnclosingRule>() ? "EnclosingRule"
                                   : std::is_same<T, Bitboard>() ? "Bitboard"
+                                  : std::is_same<T, CastlingRights>() ? "CastlingRights"
                                   : typeid(T).name();
             std::cerr << key << " - Invalid value " << it->second << " for type " << typeName << std::endl;
         }
@@ -387,6 +410,7 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("castlingRookPieces", v->castlingRookPieces[BLACK], v->pieceToChar);
     parse_attribute("castlingRookPiecesWhite", v->castlingRookPieces[WHITE], v->pieceToChar);
     parse_attribute("castlingRookPiecesBlack", v->castlingRookPieces[BLACK], v->pieceToChar);
+    parse_attribute("oppositeCastling", v->oppositeCastling);
     parse_attribute("checking", v->checking);
     parse_attribute("dropChecks", v->dropChecks);
     parse_attribute("mustCapture", v->mustCapture);
@@ -409,11 +433,14 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("dropNoDoubledCount", v->dropNoDoubledCount);
     parse_attribute("immobilityIllegal", v->immobilityIllegal);
     parse_attribute("gating", v->gating);
-    parse_attribute("arrowGating", v->arrowGating);
-    parse_attribute("duckGating", v->duckGating);
-    parse_attribute("staticGating", v->staticGating);
-    parse_attribute("pastGating", v->pastGating);
-    parse_attribute("staticGatingRegion", v->staticGatingRegion);
+    parse_attribute("arrowWalling", v->arrowWalling);
+    parse_attribute("duckWalling", v->duckWalling);
+    parse_attribute("wallingRegionWhite", v->wallingRegion[WHITE]);
+    parse_attribute("wallingRegionBlack", v->wallingRegion[BLACK]);
+    parse_attribute("wallingRegion", v->wallingRegion[WHITE]);
+    parse_attribute("wallingRegion", v->wallingRegion[BLACK]);
+    parse_attribute("staticWalling", v->staticWalling);
+    parse_attribute("pastWalling", v->pastWalling);
     parse_attribute("seirawanGating", v->seirawanGating);
     parse_attribute("cambodianMoves", v->cambodianMoves);
     parse_attribute("diagonalLines", v->diagonalLines);
@@ -467,7 +494,8 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
     parse_attribute("connectDiagonal", v->connectDiagonal);
     parse_attribute("materialCounting", v->materialCounting);
     parse_attribute("countingRule", v->countingRule);
-
+    parse_attribute("castlingWins", v->castlingWins);
+    
     // Report invalid options
     if (DoCheck)
     {
@@ -524,8 +552,8 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
             std::cerr << "Inconsistent settings: castlingQueensideFile > castlingKingsideFile." << std::endl;
 
         // Check for limitations
-        if (v->pieceDrops && (v->arrowGating || v->duckGating || v->staticGating || v->pastGating))
-            std::cerr << "pieceDrops and arrowGating/duckGating are incompatible." << std::endl;
+        if (v->pieceDrops && (v->arrowWalling || v->duckWalling || v->staticWalling || v->pastWalling))
+            std::cerr << "pieceDrops and arrowWalling/duckWalling are incompatible." << std::endl;
 
         // Options incompatible with royal kings
         if (v->pieceTypes & KING)
@@ -534,8 +562,8 @@ Variant* VariantParser<DoCheck>::parse(Variant* v) {
                 std::cerr << "Can not use kings with blastOnCapture." << std::endl;
             if (v->flipEnclosedPieces)
                 std::cerr << "Can not use kings with flipEnclosedPieces." << std::endl;
-            if (v->duckGating)
-                std::cerr << "Can not use kings with duckGating." << std::endl;
+            if (v->duckWalling)
+                std::cerr << "Can not use kings with duckWalling." << std::endl;
             // We can not fully check support for custom king movements at this point,
             // since custom pieces are only initialized on loading of the variant.
             // We will assume this is valid, but it might cause problems later if it's not.

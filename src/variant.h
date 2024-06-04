@@ -95,7 +95,6 @@ struct Variant {
   bool capturesToHand = false;
   bool firstRankPawnDrops = false;
   bool promotionZonePawnDrops = false;
-  bool dropOnTop = false;
   EnclosingRule enclosingDrop = NO_ENCLOSING;
   Bitboard enclosingDropStart = 0;
   Bitboard whiteDropRegion = AllSquares;
@@ -109,11 +108,12 @@ struct Variant {
   bool gating = false;
   WallingRule wallingRule = NO_WALLING;
   Bitboard wallingRegion[COLOR_NB] = {AllSquares, AllSquares};
+  bool wallOrMove = false;
   bool seirawanGating = false;
   bool cambodianMoves = false;
   Bitboard diagonalLines = 0;
-  bool pass = false;
-  bool passOnStalemate = false;
+  bool pass[COLOR_NB] = {false, false};
+  bool passOnStalemate[COLOR_NB] = {false, false};
   bool makpongRule = false;
   bool flyingGeneral = false;
   Rank soldierPromotionRank = RANK_1;
@@ -150,10 +150,17 @@ struct Variant {
   bool flagPieceSafe = false;
   bool checkCounting = false;
   int connectN = 0;
+  PieceSet connectPieceTypes = ~NO_PIECE_SET;
   bool connectHorizontal = true;
   bool connectVertical = true;
   bool connectDiagonal = true;
+  Bitboard connectRegion1[COLOR_NB] = {};
+  Bitboard connectRegion2[COLOR_NB] = {};
+  int connectNxN = 0;
+  int collinearN = 0;
+  Value connectValue = VALUE_MATE;
   MaterialCounting materialCounting = NO_MATERIAL_COUNTING;
+  bool adjudicateFullBoard = false;
   CountingRule countingRule = NO_COUNTING;
   CastlingRights castlingWins = NO_CASTLING;
 

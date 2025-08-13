@@ -564,17 +564,21 @@ namespace {
         sync_cout << sync_endl;
         
         // Output moves with proper numbering
-        for (size_t i = 0; i < entry.moves.size(); ++i) {
-            if (i % 2 == 0) {
-                sync_cout << (i / 2 + 1) << ". ";
-            }
-            sync_cout << entry.moves[i];
-            if (i == entry.moves.size() - 1) {
-                sync_cout << " *" << sync_endl;
-            } else if (i % 2 == 1) {
-                sync_cout << " ";
-            } else {
-                sync_cout << " ";
+        if (entry.moves.empty()) {
+            sync_cout << "*" << sync_endl;
+        } else {
+            for (size_t i = 0; i < entry.moves.size(); ++i) {
+                if (i % 2 == 0) {
+                    sync_cout << (i / 2 + 1) << ". ";
+                }
+                sync_cout << entry.moves[i];
+                if (i == entry.moves.size() - 1) {
+                    sync_cout << " *" << sync_endl;
+                } else if (i % 2 == 1) {
+                    sync_cout << " ";
+                } else {
+                    sync_cout << " ";
+                }
             }
         }
         sync_cout << sync_endl;
@@ -627,17 +631,21 @@ namespace {
         file << endl;
         
         // Output moves with proper numbering
-        for (size_t i = 0; i < entry.moves.size(); ++i) {
-            if (i % 2 == 0) {
-                file << (i / 2 + 1) << ". ";
-            }
-            file << entry.moves[i];
-            if (i == entry.moves.size() - 1) {
-                file << " *" << endl;
-            } else if (i % 2 == 1) {
-                file << " ";
-            } else {
-                file << " ";
+        if (entry.moves.empty()) {
+            file << "*" << endl;
+        } else {
+            for (size_t i = 0; i < entry.moves.size(); ++i) {
+                if (i % 2 == 0) {
+                    file << (i / 2 + 1) << ". ";
+                }
+                file << entry.moves[i];
+                if (i == entry.moves.size() - 1) {
+                    file << " *" << endl;
+                } else if (i % 2 == 1) {
+                    file << " ";
+                } else {
+                    file << " ";
+                }
             }
         }
         file << endl;

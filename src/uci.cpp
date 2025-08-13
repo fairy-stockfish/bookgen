@@ -44,6 +44,19 @@ extern vector<string> setup_bench(const Position&, istream&);
 
 namespace {
 
+  // Structure to hold book entries with FEN position and move sequence
+  struct BookEntry {
+    string fen;
+    vector<string> moves;
+    
+    BookEntry(const string& f, const vector<string>& m) : fen(f), moves(m) {}
+    
+    // For compatibility with set operations, compare only FEN
+    bool operator<(const BookEntry& other) const {
+      return fen < other.fen;
+    }
+  };
+
   // position() is called when engine receives the "position" UCI command.
   // The function sets up the position described in the given FEN string ("fen")
   // or the starting position ("startpos") and then makes the moves given in the
@@ -249,6 +262,95 @@ namespace {
     return nodes;
   }
 
+  void multipv_gen_with_moves(Position& pos, Search::LimitsType limits, Depth depth, set<BookEntry>& entries, Value range, vector<string>& move_sequence) {
+
+    limits.startTime = now();
+    StateListPtr states(new std::deque<StateInfo>(1));
+    Position newpos;
+    newpos.set(variants.find(Options["UCI_Variant"])->second, pos.fen(), Options["UCI_Chess960"], &states->back(), Threads.main());
+    Threads.start_thinking(newpos, states, limits);
+    Threads.main()->wait_for_search_finished();
+
+    vector<Move> good_moves;
+
+    const Search::RootMoves& rootMoves = pos.this_thread()->rootMoves;
+    size_t PVIdx = pos.this_thread()->pvIdx;
+    size_t multiPV = std::min((size_t)Options["MultiPV"], rootMoves.size());
+    Value bias = int(Options["AbsScoreBias"]) * PawnValueEg / 100;
+    bool abs_move_score = Options["AbsMoveScore"];
+
+    Value v0;
+
+    for (size_t i = 0; i < multiPV; ++i)
+    {
+        bool updated = (i <= PVIdx);
+
+        Value v = updated ? rootMoves[i].score : rootMoves[i].previousScore;
+        if (i == 0)
+            v0 = v;
+
+        if (abs_move_score ? std::abs((pos.side_to_move() == WHITE? v : -v) - bias) <= range
+                           : v0 - v <= range)
+            good_moves.push_back(rootMoves[i].pv[0]);
+    }
+
+    for (Move m : good_moves)
+    {
+        StateInfo st;
+        
+        // Add the move to the sequence in algebraic notation (before making the move)
+        string move_str = UCI::move(pos, m);
+        move_sequence.push_back(move_str);
+        
+        pos.do_move(m, st);
+        
+        if (depth <= 1)
+        {
+            string fen = pos.fen();
+            if (Options["TrimFEN"])
+                fen.erase(fen.rfind(" ", fen.rfind(" ") - 1));
+            entries.insert(BookEntry(fen, move_sequence));
+        }
+        else
+            multipv_gen_with_moves(pos, limits, depth - 1, entries, range * int(Options["DepthFactor"]) / 100, move_sequence);
+        
+        // Remove the move from the sequence when backtracking
+        move_sequence.pop_back();
+        pos.undo_move(m);
+    }
+
+  }
+
+  uint64_t perft_gen_with_moves(Position& pos, Depth depth, set<BookEntry>& entries, vector<string>& move_sequence) {
+
+    StateInfo st;
+    uint64_t nodes = 0;
+
+    if (depth < 1)
+    {
+        string fen = pos.fen();
+        if (Options["TrimFEN"])
+            fen.erase(fen.rfind(" ", fen.rfind(" ") - 1));
+        entries.insert(BookEntry(fen, move_sequence));
+        return ++nodes;
+    }
+
+    for (const auto& m : MoveList<LEGAL>(pos))
+    {
+        // Add the move to the sequence in algebraic notation (before making the move)
+        string move_str = UCI::move(pos, m);
+        move_sequence.push_back(move_str);
+        
+        pos.do_move(m, st);
+        nodes += perft_gen_with_moves(pos, depth - 1, entries, move_sequence);
+        
+        // Remove the move from the sequence when backtracking
+        move_sequence.pop_back();
+        pos.undo_move(m);
+    }
+    return nodes;
+  }
+
   void generate(Position& pos, istringstream& is, set<string>& fens) {
 
     Search::LimitsType limits;
@@ -267,6 +369,28 @@ namespace {
         perft_gen(pos, limits.perft, fens);
     else
         multipv_gen(pos, limits, depth, fens, int(Options["MoveScoreRange"]) * PawnValueEg / 100);
+
+  }
+
+  void generate_with_moves(Position& pos, istringstream& is, set<BookEntry>& entries) {
+
+    Search::LimitsType limits;
+    string token;
+
+    int depth;
+    is >> depth;
+
+    while (is >> token)
+        if (token == "depth")          is >> limits.depth;
+        else if (token == "nodes")     is >> limits.nodes;
+        else if (token == "movetime")  is >> limits.movetime;
+        else if (token == "perft")     limits.perft = depth;
+
+    vector<string> move_sequence;
+    if (limits.perft)
+        perft_gen_with_moves(pos, limits.perft, entries, move_sequence);
+    else
+        multipv_gen_with_moves(pos, limits, depth, entries, int(Options["MoveScoreRange"]) * PawnValueEg / 100, move_sequence);
 
   }
 
@@ -344,6 +468,185 @@ namespace {
     ofstream file(Options["EPDPath"]);
     for (const auto& fen : fens)
         file << fen << endl;
+  }
+
+  void filter_with_moves(istringstream& is, set<BookEntry>& entries) {
+
+    Search::LimitsType limits;
+    string token;
+
+    while (is >> token)
+        if (token == "depth")          is >> limits.depth;
+        else if (token == "nodes")     is >> limits.nodes;
+        else if (token == "movetime")  is >> limits.movetime;
+
+    StateListPtr states;
+    Position pos;
+    set<BookEntry> filtered_entries;
+
+    Value range         = int(Options["MoveScoreRange"]) * PawnValueEg / 100;
+    Value abs_range     = int(Options["AbsScoreRange"])  * PawnValueEg / 100;
+    Value bias          = int(Options["AbsScoreBias"])   * PawnValueEg / 100;
+    bool abs_move_score = int(Options["AbsMoveScore"]);
+
+    for (const auto& entry : entries)
+    {
+        limits.startTime = now();
+        states = StateListPtr(new std::deque<StateInfo>(1));
+        pos.set(variants.find(Options["UCI_Variant"])->second, entry.fen, Options["UCI_Chess960"], &states->back(), Threads.main());
+        Threads.start_thinking(pos, states, limits);
+        Threads.main()->wait_for_search_finished();
+
+        const Search::RootMoves& rootMoves = pos.this_thread()->rootMoves;
+        size_t PVIdx = pos.this_thread()->pvIdx;
+        size_t multiPV = std::min((size_t)Options["MultiPV"], rootMoves.size());
+
+
+        Value v, v0;
+        bool exclude = false;
+
+        for (size_t i = 0; i < multiPV; ++i)
+        {
+            bool updated = (i <= PVIdx);
+
+            v = updated ? rootMoves[i].score : rootMoves[i].previousScore;
+            if (i == 0)
+            {
+                if (std::abs((pos.side_to_move() == WHITE? v : -v) - bias) > abs_range)
+                {
+                    exclude = true;
+                    break;
+                }
+                v0 = v;
+            }
+            else if (abs_move_score ? std::abs((pos.side_to_move() == WHITE? v : -v) - bias) > range
+                                    : v0 - v > range)
+            {
+                exclude = true;
+                break;
+            }
+        }
+
+        if (exclude)
+            continue;
+
+        filtered_entries.insert(entry);
+    }
+    entries = filtered_entries;
+  }
+
+  // Forward declarations
+  void print_pgn(const set<BookEntry>& entries);
+  void save_pgn(const set<BookEntry>& entries, const string& filename);
+  void save_epd(const set<BookEntry>& entries, const string& filename);
+
+  void print_entries(const set<BookEntry>& entries) {
+    string format = Options["BookFormat"];
+    if (format == "pgn") {
+        print_pgn(entries);
+    } else {
+        for (const auto& entry : entries)
+            sync_cout << entry.fen << sync_endl;
+    }
+  }
+
+  void print_pgn(const set<BookEntry>& entries) {
+    int game_num = 1;
+    for (const auto& entry : entries) {
+        sync_cout << "[Event \"Book Generation\"]" << sync_endl;
+        sync_cout << "[Site \"?\"]" << sync_endl;
+        sync_cout << "[Date \"????.??.??\"]" << sync_endl;
+        sync_cout << "[Round \"?\"]" << sync_endl;
+        sync_cout << "[White \"?\"]" << sync_endl;
+        sync_cout << "[Black \"?\"]" << sync_endl;
+        sync_cout << "[Result \"*\"]" << sync_endl;
+        sync_cout << "[Variant \"" << string(Options["UCI_Variant"]) << "\"]" << sync_endl;
+        sync_cout << sync_endl;
+        
+        // Output moves with proper numbering
+        for (size_t i = 0; i < entry.moves.size(); ++i) {
+            if (i % 2 == 0) {
+                sync_cout << (i / 2 + 1) << ". ";
+            }
+            sync_cout << entry.moves[i];
+            if (i == entry.moves.size() - 1) {
+                sync_cout << " *" << sync_endl;
+            } else if (i % 2 == 1) {
+                sync_cout << " ";
+            } else {
+                sync_cout << " ";
+            }
+        }
+        sync_cout << sync_endl;
+        
+        if (static_cast<size_t>(game_num) < entries.size()) {
+            sync_cout << sync_endl; // Blank line between games
+        }
+        game_num++;
+    }
+  }
+
+  void save_entries(const set<BookEntry>& entries) {
+    string format = Options["BookFormat"];
+    string filename;
+    
+    if (format == "pgn") {
+        // Use BookPath with .pgn extension, or fall back to EPDPath logic
+        string bookPath = Options["BookPath"];
+        if (bookPath.find('.') == string::npos) {
+            filename = bookPath + ".pgn";
+        } else {
+            filename = bookPath;
+        }
+        save_pgn(entries, filename);
+    } else {
+        // EPD format - use EPDPath for backward compatibility
+        filename = string(Options["EPDPath"]);
+        save_epd(entries, filename);
+    }
+  }
+
+  void save_epd(const set<BookEntry>& entries, const string& filename) {
+    ofstream file(filename);
+    for (const auto& entry : entries)
+        file << entry.fen << endl;
+  }
+
+  void save_pgn(const set<BookEntry>& entries, const string& filename) {
+    ofstream file(filename);
+    int game_num = 1;
+    for (const auto& entry : entries) {
+        file << "[Event \"Book Generation\"]" << endl;
+        file << "[Site \"?\"]" << endl;
+        file << "[Date \"????.??.??\"]" << endl;
+        file << "[Round \"?\"]" << endl;
+        file << "[White \"?\"]" << endl;
+        file << "[Black \"?\"]" << endl;
+        file << "[Result \"*\"]" << endl;
+        file << "[Variant \"" << string(Options["UCI_Variant"]) << "\"]" << endl;
+        file << endl;
+        
+        // Output moves with proper numbering
+        for (size_t i = 0; i < entry.moves.size(); ++i) {
+            if (i % 2 == 0) {
+                file << (i / 2 + 1) << ". ";
+            }
+            file << entry.moves[i];
+            if (i == entry.moves.size() - 1) {
+                file << " *" << endl;
+            } else if (i % 2 == 1) {
+                file << " ";
+            } else {
+                file << " ";
+            }
+        }
+        file << endl;
+        
+        if (static_cast<size_t>(game_num) < entries.size()) {
+            file << endl; // Blank line between games
+        }
+        game_num++;
+    }
   }
 
   // bench() is called when engine receives the "bench" command. Firstly
@@ -471,6 +774,7 @@ void UCI::loop(int argc, char* argv[]) {
   string token, cmd;
   StateListPtr states(new std::deque<StateInfo>(1));
   set<string> fens;
+  set<BookEntry> entries;
 
   assert(variants.find(Options["UCI_Variant"])->second != nullptr);
   pos.set(variants.find(Options["UCI_Variant"])->second, variants.find(Options["UCI_Variant"])->second->startFen, false, &states->back(), Threads.main());
@@ -547,12 +851,50 @@ void UCI::loop(int argc, char* argv[]) {
           XBoard::stateMachine->process_command(token, is);
 
       // Book generation commands
-      else if (token == "generate")   generate(pos, is, fens);
-      else if (token == "filter")     filter(is, fens);
-      else if (token == "clear")      fens.clear();
-      else if (token == "size")       sync_cout << fens.size() << sync_endl;
-      else if (token == "print")      print(fens);
-      else if (token == "save")       save(fens);
+      else if (token == "generate") {
+          string format = Options["BookFormat"];
+          if (format == "pgn") {
+              generate_with_moves(pos, is, entries);
+          } else {
+              generate(pos, is, fens);
+          }
+      }
+      else if (token == "filter") {
+          string format = Options["BookFormat"];
+          if (format == "pgn") {
+              filter_with_moves(is, entries);
+          } else {
+              filter(is, fens);
+          }
+      }
+      else if (token == "clear") {
+          fens.clear();
+          entries.clear();
+      }
+      else if (token == "size") {
+          string format = Options["BookFormat"];
+          if (format == "pgn") {
+              sync_cout << entries.size() << sync_endl;
+          } else {
+              sync_cout << fens.size() << sync_endl;
+          }
+      }
+      else if (token == "print") {
+          string format = Options["BookFormat"];
+          if (format == "pgn") {
+              print_entries(entries);
+          } else {
+              print(fens);
+          }
+      }
+      else if (token == "save") {
+          string format = Options["BookFormat"];
+          if (format == "pgn") {
+              save_entries(entries);
+          } else {
+              save(fens);
+          }
+      }
 
       else if (token == "setoption")  setoption(is);
       // UCCI-specific banmoves command

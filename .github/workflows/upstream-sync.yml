@@ -12,6 +12,8 @@ jobs:
   sync_latest_from_upstream:
     runs-on: ubuntu-latest
     name: Sync latest commits from upstream repo
+    permissions:
+      contents: write
 
     steps:
       # Step 1: Checkout target repo

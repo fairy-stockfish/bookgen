@@ -38,6 +38,7 @@ jobs:
           ref: master
           # Required for pushing changes
           persist-credentials: true
+          token: ${{ secrets.WORKFLOW_TOKEN }}
 
       # Step 2: Sync upstream changes
       - name: Sync upstream changes

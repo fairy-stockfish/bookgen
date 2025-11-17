@@ -187,6 +187,8 @@ void init(OptionsMap& o) {
   o["DepthFactor"]           << Option(100, 0, 200);
   o["AbsMoveScore"]          << Option(false);
   o["TrimFEN"]               << Option(false);
+  o["BookFormat"]            << Option("epd", std::vector<std::string>{"epd", "pgn"});
+  o["BookPath"]              << Option("book");
   o["EPDPath"]               << Option("book.epd");
   o["Threads"]               << Option(1, 1, 512, on_threads);
   o["Hash"]                  << Option(16, 1, MaxHashMB, on_hash_size);

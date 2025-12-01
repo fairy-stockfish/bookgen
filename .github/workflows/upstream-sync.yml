@@ -33,7 +33,7 @@ jobs:
     steps:
       # Step 1: Checkout target repo
       - name: Checkout target repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           ref: master
           # Required for pushing changes

@@ -1,8 +1,6 @@
 /*
   Stockfish, a UCI chess playing engine derived from Glaurung 2.1
-  Copyright (C) 2004-2008 Tord Romstad (Glaurung author)
-  Copyright (C) 2008-2015 Marco Costalba, Joona Kiiski, Tord Romstad
-  Copyright (C) 2015-2017 Marco Costalba, Joona Kiiski, Gary Linscott, Tord Romstad
+  Copyright (C) 2004-2025 The Stockfish developers (see AUTHORS file)
 
   Stockfish is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -18,308 +16,512 @@
   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#ifdef _WIN32
-#if _WIN32_WINNT < 0x0601
-#undef  _WIN32_WINNT
-#define _WIN32_WINNT 0x0601 // Force to include needed API prototypes
-#endif
-#include <windows.h>
-// The needed Windows API for processor groups could be missed from old Windows
-// versions, so instead of calling them directly (forcing the linker to resolve
-// the calls at compile time), try to load them at runtime. To do this we need
-// first to define the corresponding function pointers.
-extern "C" {
-typedef bool(*fun1_t)(LOGICAL_PROCESSOR_RELATIONSHIP,
-                      PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX, PDWORD);
-typedef bool(*fun2_t)(USHORT, PGROUP_AFFINITY);
-typedef bool(*fun3_t)(HANDLE, CONST GROUP_AFFINITY*, PGROUP_AFFINITY);
-}
-#endif
+#include "misc.h"
 
+#include <array>
+#include <atomic>
+#include <cassert>
+#include <cctype>
+#include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
+#include <limits>
+#include <mutex>
 #include <sstream>
-#include <vector>
+#include <string_view>
 
-#include "misc.h"
-#include "thread.h"
+#include "types.h"
 
-using namespace std;
+namespace Stockfish {
 
 namespace {
 
-/// Version number. If Version is left empty, then compile date in the format
-/// DD-MM-YY and show in engine_info.
-const string Version = "";
+// Version number or dev.
+constexpr std::string_view version = "dev";
 
-/// Our fancy logging facility. The trick here is to replace cin.rdbuf() and
-/// cout.rdbuf() with two Tie objects that tie cin and cout to a file stream. We
-/// can toggle the logging of std::cout and std:cin at runtime whilst preserving
-/// usual I/O functionality, all without changing a single line of code!
-/// Idea from http://groups.google.com/group/comp.lang.c++/msg/1d941c0f26ea0d81
+// Our fancy logging facility. The trick here is to replace cin.rdbuf() and
+// cout.rdbuf() with two Tie objects that tie cin and cout to a file stream. We
+// can toggle the logging of std::cout and std::cin at runtime whilst preserving
+// usual I/O functionality, all without changing a single line of code!
+// Idea from http://groups.google.com/group/comp.lang.c++/msg/1d941c0f26ea0d81
 
-struct Tie: public streambuf { // MSVC requires split streambuf for cin and cout
+struct Tie: public std::streambuf {  // MSVC requires split streambuf for cin and cout
 
-  Tie(streambuf* b, streambuf* l) : buf(b), logBuf(l) {}
+    Tie(std::streambuf* b, std::streambuf* l) :
+        buf(b),
+        logBuf(l) {}
 
-  int sync() override { return logBuf->pubsync(), buf->pubsync(); }
-  int overflow(int c) override { return log(buf->sputc((char)c), "<< "); }
-  int underflow() override { return buf->sgetc(); }
-  int uflow() override { return log(buf->sbumpc(), ">> "); }
+    int sync() override { return logBuf->pubsync(), buf->pubsync(); }
+    int overflow(int c) override { return log(buf->sputc(char(c)), "<< "); }
+    int underflow() override { return buf->sgetc(); }
+    int uflow() override { return log(buf->sbumpc(), ">> "); }
 
-  streambuf *buf, *logBuf;
+    std::streambuf *buf, *logBuf;
 
-  int log(int c, const char* prefix) {
+    int log(int c, const char* prefix) {
 
-    static int last = '\n'; // Single log file
+        static int last = '\n';  // Single log file
 
-    if (last == '\n')
-        logBuf->sputn(prefix, 3);
+        if (last == '\n')
+            logBuf->sputn(prefix, 3);
 
-    return last = logBuf->sputc((char)c);
-  }
+        return last = logBuf->sputc(char(c));
+    }
 };
 
 class Logger {
 
-  Logger() : in(cin.rdbuf(), file.rdbuf()), out(cout.rdbuf(), file.rdbuf()) {}
- ~Logger() { start(""); }
+    Logger() :
+        in(std::cin.rdbuf(), file.rdbuf()),
+        out(std::cout.rdbuf(), file.rdbuf()) {}
+    ~Logger() { start(""); }
 
-  ofstream file;
-  Tie in, out;
+    std::ofstream file;
+    Tie           in, out;
 
-public:
-  static void start(const std::string& fname) {
+   public:
+    static void start(const std::string& fname) {
 
-    static Logger l;
+        static Logger l;
 
-    if (!fname.empty() && !l.file.is_open())
-    {
-        l.file.open(fname, ifstream::out);
-        cin.rdbuf(&l.in);
-        cout.rdbuf(&l.out);
+        if (l.file.is_open())
+        {
+            std::cout.rdbuf(l.out.buf);
+            std::cin.rdbuf(l.in.buf);
+            l.file.close();
+        }
+
+        if (!fname.empty())
+        {
+            l.file.open(fname, std::ifstream::out);
+
+            if (!l.file.is_open())
+            {
+                std::cerr << "Unable to open debug log file " << fname << std::endl;
+                exit(EXIT_FAILURE);
+            }
+
+            std::cin.rdbuf(&l.in);
+            std::cout.rdbuf(&l.out);
+        }
     }
-    else if (fname.empty() && l.file.is_open())
-    {
-        cout.rdbuf(l.out.buf);
-        cin.rdbuf(l.in.buf);
-        l.file.close();
-    }
-  }
 };
 
-} // namespace
+}  // namespace
 
-/// engine_info() returns the full name of the current Stockfish version. This
-/// will be either "Stockfish <Tag> DD-MM-YY" (where DD-MM-YY is the date when
-/// the program was compiled) or "Stockfish <Version>", depending on whether
-/// Version is empty.
 
-const string engine_info(bool to_uci) {
+// Returns the full name of the current Stockfish version.
+//
+// For local dev compiles we try to append the commit SHA and
+// commit date from git. If that fails only the local compilation
+// date is set and "nogit" is specified:
+//      Stockfish dev-YYYYMMDD-SHA
+//      or
+//      Stockfish dev-YYYYMMDD-nogit
+//
+// For releases (non-dev builds) we only include the version number:
+//      Stockfish version
+std::string engine_version_info() {
+    std::stringstream ss;
+    ss << "Stockfish " << version << std::setfill('0');
 
-  const string months("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec");
-  string month, day, year;
-  stringstream ss, date(__DATE__); // From compiler, format is "Sep 21 2008"
+    if constexpr (version == "dev")
+    {
+        ss << "-";
+#ifdef GIT_DATE
+        ss << stringify(GIT_DATE);
+#else
+        constexpr std::string_view months("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec");
 
-  ss << "Stockfish " << Version << setfill('0');
+        std::string       month, day, year;
+        std::stringstream date(__DATE__);  // From compiler, format is "Sep 21 2008"
 
-  if (Version.empty())
-  {
-      date >> month >> day >> year;
-      ss << setw(2) << day << setw(2) << (1 + months.find(month) / 4) << year.substr(2);
-  }
+        date >> month >> day >> year;
+        ss << year << std::setw(2) << std::setfill('0') << (1 + months.find(month) / 4)
+           << std::setw(2) << std::setfill('0') << day;
+#endif
 
-  ss << (Is64Bit ? " 64" : "")
-     << (HasPext ? " BMI2" : (HasPopCnt ? " POPCNT" : ""))
-     << (to_uci  ? "\nid author ": " by ")
-     << "T. Romstad, M. Costalba, J. Kiiski, G. Linscott";
+        ss << "-";
 
-  return ss.str();
+#ifdef GIT_SHA
+        ss << stringify(GIT_SHA);
+#else
+        ss << "nogit";
+#endif
+    }
+
+    return ss.str();
+}
+
+std::string engine_info(bool to_uci) {
+    return engine_version_info() + (to_uci ? "\nid author " : " by ")
+         + "the Stockfish developers (see AUTHORS file)";
 }
 
 
-/// Debug functions used mainly to collect run-time statistics
-static int64_t hits[2], means[2];
+// Returns a string trying to describe the compiler we use
+std::string compiler_info() {
 
-void dbg_hit_on(bool b) { ++hits[0]; if (b) ++hits[1]; }
-void dbg_hit_on(bool c, bool b) { if (c) dbg_hit_on(b); }
-void dbg_mean_of(int v) { ++means[0]; means[1] += v; }
+#define make_version_string(major, minor, patch) \
+    stringify(major) "." stringify(minor) "." stringify(patch)
+
+    // Predefined macros hell:
+    //
+    // __GNUC__                Compiler is GCC, Clang or ICX
+    // __clang__               Compiler is Clang or ICX
+    // __INTEL_LLVM_COMPILER   Compiler is ICX
+    // _MSC_VER                Compiler is MSVC
+    // _WIN32                  Building on Windows (any)
+    // _WIN64                  Building on Windows 64 bit
+
+    std::string compiler = "\nCompiled by                : ";
+
+#if defined(__INTEL_LLVM_COMPILER)
+    compiler += "ICX ";
+    compiler += stringify(__INTEL_LLVM_COMPILER);
+#elif defined(__clang__)
+    compiler += "clang++ ";
+    compiler += make_version_string(__clang_major__, __clang_minor__, __clang_patchlevel__);
+#elif _MSC_VER
+    compiler += "MSVC ";
+    compiler += "(version ";
+    compiler += stringify(_MSC_FULL_VER) "." stringify(_MSC_BUILD);
+    compiler += ")";
+#elif defined(__e2k__) && defined(__LCC__)
+    #define dot_ver2(n) \
+        compiler += char('.'); \
+        compiler += char('0' + (n) / 10); \
+        compiler += char('0' + (n) % 10);
+
+    compiler += "MCST LCC ";
+    compiler += "(version ";
+    compiler += std::to_string(__LCC__ / 100);
+    dot_ver2(__LCC__ % 100) dot_ver2(__LCC_MINOR__) compiler += ")";
+#elif __GNUC__
+    compiler += "g++ (GNUC) ";
+    compiler += make_version_string(__GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
+#else
+    compiler += "Unknown compiler ";
+    compiler += "(unknown version)";
+#endif
+
+#if defined(__APPLE__)
+    compiler += " on Apple";
+#elif defined(__CYGWIN__)
+    compiler += " on Cygwin";
+#elif defined(__MINGW64__)
+    compiler += " on MinGW64";
+#elif defined(__MINGW32__)
+    compiler += " on MinGW32";
+#elif defined(__ANDROID__)
+    compiler += " on Android";
+#elif defined(__linux__)
+    compiler += " on Linux";
+#elif defined(_WIN64)
+    compiler += " on Microsoft Windows 64-bit";
+#elif defined(_WIN32)
+    compiler += " on Microsoft Windows 32-bit";
+#else
+    compiler += " on unknown system";
+#endif
+
+    compiler += "\nCompilation architecture   : ";
+#if defined(ARCH)
+    compiler += stringify(ARCH);
+#else
+    compiler += "(undefined architecture)";
+#endif
+
+    compiler += "\nCompilation settings       : ";
+    compiler += (Is64Bit ? "64bit" : "32bit");
+#if defined(USE_AVX512ICL)
+    compiler += " AVX512ICL";
+#endif
+#if defined(USE_VNNI)
+    compiler += " VNNI";
+#endif
+#if defined(USE_AVX512)
+    compiler += " AVX512";
+#endif
+    compiler += (HasPext ? " BMI2" : "");
+#if defined(USE_AVX2)
+    compiler += " AVX2";
+#endif
+#if defined(USE_SSE41)
+    compiler += " SSE41";
+#endif
+#if defined(USE_SSSE3)
+    compiler += " SSSE3";
+#endif
+#if defined(USE_SSE2)
+    compiler += " SSE2";
+#endif
+#if defined(USE_NEON_DOTPROD)
+    compiler += " NEON_DOTPROD";
+#elif defined(USE_NEON)
+    compiler += " NEON";
+#endif
+    compiler += (HasPopCnt ? " POPCNT" : "");
+
+#if !defined(NDEBUG)
+    compiler += " DEBUG";
+#endif
+
+    compiler += "\nCompiler __VERSION__ macro : ";
+#ifdef __VERSION__
+    compiler += __VERSION__;
+#else
+    compiler += "(undefined macro)";
+#endif
+
+    compiler += "\n";
+
+    return compiler;
+}
+
+
+// Debug functions used mainly to collect run-time statistics
+constexpr int MaxDebugSlots = 32;
+
+namespace {
+
+template<size_t N>
+struct DebugInfo {
+    std::array<std::atomic<int64_t>, N> data = {0};
+
+    [[nodiscard]] constexpr std::atomic<int64_t>& operator[](size_t index) {
+        assert(index < N);
+        return data[index];
+    }
+
+    constexpr DebugInfo& operator=(const DebugInfo& other) {
+        for (size_t i = 0; i < N; i++)
+            data[i].store(other.data[i].load());
+        return *this;
+    }
+};
+
+struct DebugExtremes: public DebugInfo<3> {
+    DebugExtremes() {
+        data[1] = std::numeric_limits<int64_t>::min();
+        data[2] = std::numeric_limits<int64_t>::max();
+    }
+};
+
+std::array<DebugInfo<2>, MaxDebugSlots>  hit;
+std::array<DebugInfo<2>, MaxDebugSlots>  mean;
+std::array<DebugInfo<3>, MaxDebugSlots>  stdev;
+std::array<DebugInfo<6>, MaxDebugSlots>  correl;
+std::array<DebugExtremes, MaxDebugSlots> extremes;
+
+}  // namespace
+
+void dbg_hit_on(bool cond, int slot) {
+
+    ++hit.at(slot)[0];
+    if (cond)
+        ++hit.at(slot)[1];
+}
+
+void dbg_mean_of(int64_t value, int slot) {
+
+    ++mean.at(slot)[0];
+    mean.at(slot)[1] += value;
+}
+
+void dbg_stdev_of(int64_t value, int slot) {
+
+    ++stdev.at(slot)[0];
+    stdev.at(slot)[1] += value;
+    stdev.at(slot)[2] += value * value;
+}
+
+void dbg_extremes_of(int64_t value, int slot) {
+    ++extremes.at(slot)[0];
+
+    int64_t current_max = extremes.at(slot)[1].load();
+    while (current_max < value && !extremes.at(slot)[1].compare_exchange_weak(current_max, value))
+    {}
+
+    int64_t current_min = extremes.at(slot)[2].load();
+    while (current_min > value && !extremes.at(slot)[2].compare_exchange_weak(current_min, value))
+    {}
+}
+
+void dbg_correl_of(int64_t value1, int64_t value2, int slot) {
+
+    ++correl.at(slot)[0];
+    correl.at(slot)[1] += value1;
+    correl.at(slot)[2] += value1 * value1;
+    correl.at(slot)[3] += value2;
+    correl.at(slot)[4] += value2 * value2;
+    correl.at(slot)[5] += value1 * value2;
+}
 
 void dbg_print() {
 
-  if (hits[0])
-      cerr << "Total " << hits[0] << " Hits " << hits[1]
-           << " hit rate (%) " << 100 * hits[1] / hits[0] << endl;
+    int64_t n;
+    auto    E   = [&n](int64_t x) { return double(x) / n; };
+    auto    sqr = [](double x) { return x * x; };
 
-  if (means[0])
-      cerr << "Total " << means[0] << " Mean "
-           << (double)means[1] / means[0] << endl;
+    for (int i = 0; i < MaxDebugSlots; ++i)
+        if ((n = hit[i][0]))
+            std::cerr << "Hit #" << i << ": Total " << n << " Hits " << hit[i][1]
+                      << " Hit Rate (%) " << 100.0 * E(hit[i][1]) << std::endl;
+
+    for (int i = 0; i < MaxDebugSlots; ++i)
+        if ((n = mean[i][0]))
+        {
+            std::cerr << "Mean #" << i << ": Total " << n << " Mean " << E(mean[i][1]) << std::endl;
+        }
+
+    for (int i = 0; i < MaxDebugSlots; ++i)
+        if ((n = stdev[i][0]))
+        {
+            double r = sqrt(E(stdev[i][2]) - sqr(E(stdev[i][1])));
+            std::cerr << "Stdev #" << i << ": Total " << n << " Stdev " << r << std::endl;
+        }
+
+    for (int i = 0; i < MaxDebugSlots; ++i)
+        if ((n = extremes[i][0]))
+        {
+            std::cerr << "Extremity #" << i << ": Total " << n << " Min " << extremes[i][2]
+                      << " Max " << extremes[i][1] << std::endl;
+        }
+
+    for (int i = 0; i < MaxDebugSlots; ++i)
+        if ((n = correl[i][0]))
+        {
+            double r = (E(correl[i][5]) - E(correl[i][1]) * E(correl[i][3]))
+                     / (sqrt(E(correl[i][2]) - sqr(E(correl[i][1])))
+                        * sqrt(E(correl[i][4]) - sqr(E(correl[i][3]))));
+            std::cerr << "Correl. #" << i << ": Total " << n << " Coefficient " << r << std::endl;
+        }
 }
 
+void dbg_clear() {
+    hit.fill({});
+    mean.fill({});
+    stdev.fill({});
+    correl.fill({});
+    extremes.fill({});
+}
 
-/// Used to serialize access to std::cout to avoid multiple threads writing at
-/// the same time.
-
+// Used to serialize access to std::cout
+// to avoid multiple threads writing at the same time.
 std::ostream& operator<<(std::ostream& os, SyncCout sc) {
 
-  static Mutex m;
+    static std::mutex m;
 
-  if (sc == IO_LOCK)
-      m.lock();
+    if (sc == IO_LOCK)
+        m.lock();
 
-  if (sc == IO_UNLOCK)
-      m.unlock();
+    if (sc == IO_UNLOCK)
+        m.unlock();
 
-  return os;
+    return os;
 }
 
+void sync_cout_start() { std::cout << IO_LOCK; }
+void sync_cout_end() { std::cout << IO_UNLOCK; }
 
-/// Trampoline helper to avoid moving Logger to misc.h
+// Trampoline helper to avoid moving Logger to misc.h
 void start_logger(const std::string& fname) { Logger::start(fname); }
 
 
-/// prefetch() preloads the given address in L1/L2 cache. This is a non-blocking
-/// function that doesn't stall the CPU waiting for data to be loaded from memory,
-/// which can be quite slow.
 #ifdef NO_PREFETCH
 
-void prefetch(void*) {}
+void prefetch(const void*) {}
 
 #else
 
-void prefetch(void* addr) {
+void prefetch(const void* addr) {
 
-#  if defined(__INTEL_COMPILER)
-   // This hack prevents prefetches from being optimized away by
-   // Intel compiler. Both MSVC and gcc seem not be affected by this.
-   __asm__ ("");
-#  endif
-
-#  if defined(__INTEL_COMPILER) || defined(_MSC_VER)
-  _mm_prefetch((char*)addr, _MM_HINT_T0);
-#  else
-  __builtin_prefetch(addr);
-#  endif
+    #if defined(_MSC_VER)
+    _mm_prefetch((char const*) addr, _MM_HINT_T0);
+    #else
+    __builtin_prefetch(addr);
+    #endif
 }
 
 #endif
 
-void prefetch2(void* addr) {
-
-  prefetch(addr);
-  prefetch((uint8_t*)addr + 64);
-}
-
-namespace WinProcGroup {
-
-#ifndef _WIN32
-
-void bindThisThread(size_t) {}
-
+#ifdef _WIN32
+    #include <direct.h>
+    #define GETCWD _getcwd
 #else
-
-/// get_group() retrieves logical processor information using Windows specific
-/// API and returns the best group id for the thread with index idx. Original
-/// code from Texel by Peter Österlund.
-
-int get_group(size_t idx) {
-
-  int threads = 0;
-  int nodes = 0;
-  int cores = 0;
-  DWORD returnLength = 0;
-  DWORD byteOffset = 0;
-
-  // Early exit if the needed API is not available at runtime
-  HMODULE k32 = GetModuleHandle("Kernel32.dll");
-  auto fun1 = (fun1_t)GetProcAddress(k32, "GetLogicalProcessorInformationEx");
-  if (!fun1)
-      return -1;
-
-  // First call to get returnLength. We expect it to fail due to null buffer
-  if (fun1(RelationAll, nullptr, &returnLength))
-      return -1;
-
-  // Once we know returnLength, allocate the buffer
-  SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *buffer, *ptr;
-  ptr = buffer = (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*)malloc(returnLength);
-
-  // Second call, now we expect to succeed
-  if (!fun1(RelationAll, buffer, &returnLength))
-  {
-      free(buffer);
-      return -1;
-  }
-
-  while (ptr->Size > 0 && byteOffset + ptr->Size <= returnLength)
-  {
-      if (ptr->Relationship == RelationNumaNode)
-          nodes++;
-
-      else if (ptr->Relationship == RelationProcessorCore)
-      {
-          cores++;
-          threads += (ptr->Processor.Flags == LTP_PC_SMT) ? 2 : 1;
-      }
-
-      byteOffset += ptr->Size;
-      ptr = (SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*)(((char*)ptr) + ptr->Size);
-  }
-
-  free(buffer);
-
-  std::vector<int> groups;
-
-  // Run as many threads as possible on the same node until core limit is
-  // reached, then move on filling the next node.
-  for (int n = 0; n < nodes; n++)
-      for (int i = 0; i < cores / nodes; i++)
-          groups.push_back(n);
-
-  // In case a core has more than one logical processor (we assume 2) and we
-  // have still threads to allocate, then spread them evenly across available
-  // nodes.
-  for (int t = 0; t < threads - cores; t++)
-      groups.push_back(t % nodes);
-
-  // If we still have more threads than the total number of logical processors
-  // then return -1 and let the OS to decide what to do.
-  return idx < groups.size() ? groups[idx] : -1;
-}
-
-
-/// bindThisThread() set the group affinity of the current thread
-
-void bindThisThread(size_t idx) {
-
-  // If OS already scheduled us on a different group than 0 then don't overwrite
-  // the choice, eventually we are one of many one-threaded processes running on
-  // some Windows NUMA hardware, for instance in fishtest. To make it simple,
-  // just check if running threads are below a threshold, in this case all this
-  // NUMA machinery is not needed.
-  if (Threads.size() < 8)
-      return;
-
-  // Use only local variables to be thread-safe
-  int group = get_group(idx);
-
-  if (group == -1)
-      return;
-
-  // Early exit if the needed API are not available at runtime
-  HMODULE k32 = GetModuleHandle("Kernel32.dll");
-  auto fun2 = (fun2_t)GetProcAddress(k32, "GetNumaNodeProcessorMaskEx");
-  auto fun3 = (fun3_t)GetProcAddress(k32, "SetThreadGroupAffinity");
-
-  if (!fun2 || !fun3)
-      return;
-
-  GROUP_AFFINITY affinity;
-  if (fun2(group, &affinity))
-      fun3(GetCurrentThread(), &affinity, nullptr);
-}
-
+    #include <unistd.h>
+    #define GETCWD getcwd
 #endif
 
-} // namespace WinProcGroup
+size_t str_to_size_t(const std::string& s) {
+    unsigned long long value = std::stoull(s);
+    if (value > std::numeric_limits<size_t>::max())
+        std::exit(EXIT_FAILURE);
+    return static_cast<size_t>(value);
+}
+
+std::optional<std::string> read_file_to_string(const std::string& path) {
+    std::ifstream f(path, std::ios_base::binary);
+    if (!f)
+        return std::nullopt;
+    return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+}
+
+void remove_whitespace(std::string& s) {
+    s.erase(std::remove_if(s.begin(), s.end(), [](char c) { return std::isspace(c); }), s.end());
+}
+
+bool is_whitespace(std::string_view s) {
+    return std::all_of(s.begin(), s.end(), [](char c) { return std::isspace(c); });
+}
+
+std::string CommandLine::get_binary_directory(std::string argv0) {
+    std::string pathSeparator;
+
+#ifdef _WIN32
+    pathSeparator = "\\";
+    #ifdef _MSC_VER
+    // Under windows argv[0] may not have the extension. Also _get_pgmptr() had
+    // issues in some Windows 10 versions, so check returned values carefully.
+    char* pgmptr = nullptr;
+    if (!_get_pgmptr(&pgmptr) && pgmptr != nullptr && *pgmptr)
+        argv0 = pgmptr;
+    #endif
+#else
+    pathSeparator = "/";
+#endif
+
+    // Extract the working directory
+    auto workingDirectory = CommandLine::get_working_directory();
+
+    // Extract the binary directory path from argv0
+    auto   binaryDirectory = argv0;
+    size_t pos             = binaryDirectory.find_last_of("\\/");
+    if (pos == std::string::npos)
+        binaryDirectory = "." + pathSeparator;
+    else
+        binaryDirectory.resize(pos + 1);
+
+    // Pattern replacement: "./" at the start of path is replaced by the working directory
+    if (binaryDirectory.find("." + pathSeparator) == 0)
+        binaryDirectory.replace(0, 1, workingDirectory);
+
+    return binaryDirectory;
+}
+
+std::string CommandLine::get_working_directory() {
+    std::string workingDirectory = "";
+    char        buff[40000];
+    char*       cwd = GETCWD(buff, 40000);
+    if (cwd)
+        workingDirectory = cwd;
+
+    return workingDirectory;
+}
+
+
+}  // namespace Stockfish

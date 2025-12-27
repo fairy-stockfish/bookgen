@@ -8,3 +8,5 @@ Several methods for generation and filtering of positions in FEN format are supp
 Built binaries for Windows and Linux can be downloaded from the [releases](https://github.com/fairy-stockfish/bookgen/releases). Development versions can be downloaded from the [release workflow](https://github.com/fairy-stockfish/bookgen/actions/workflows/release.yml) (requires logging in to github).
 
 Instead of downloading it, you can also use the [online book generator](https://bookgen-wasm.vercel.app) ([code](https://github.com/ianfab/bookgen-wasm)), which uses the [WebAssembly port](https://github.com/fairy-stockfish/fairy-stockfish.wasm/tree/bookgen).
+
+There is also a branch for a [book generator based on official Stockfish](https://github.com/fairy-stockfish/bookgen/tree/official-stockfish).

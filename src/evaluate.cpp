@@ -64,6 +64,7 @@ const Variant* currentNnueVariant;
 namespace Eval {
 
   bool useNNUE;
+  bool isChessVariant = true;
   string eval_file_loaded = "None";
 
   /// NNUE::init() tries to load a NNUE network at startup time, or when the engine
@@ -422,8 +423,9 @@ namespace {
         kingRing[Us] = Bitboard(0);
     else
     {
-        Square s = make_square(std::clamp(file_of(ksq), FILE_B, File(pos.max_file() - 1)),
-                               std::clamp(rank_of(ksq), RANK_2, Rank(pos.max_rank() - 1)));
+        // The upper bounds must not be below the lower bounds, e.g., on a board with a single rank
+        Square s = make_square(std::clamp(file_of(ksq), FILE_B, std::max(File(pos.max_file() - 1), FILE_B)),
+                               std::clamp(rank_of(ksq), RANK_2, std::max(Rank(pos.max_rank() - 1), RANK_2)));
         kingRing[Us] = attacks_bb<KING>(s) | s;
     }
 
@@ -694,7 +696,7 @@ namespace {
     b1 = attacks_bb<ROOK  >(ksq, pos.pieces() ^ pos.pieces(Us, QUEEN));
     b2 = attacks_bb<BISHOP>(ksq, pos.pieces() ^ pos.pieces(Us, QUEEN));
 
-    std::function <Bitboard (Color, PieceType)> get_attacks = [this](Color c, PieceType pt) {
+    auto get_attacks = [this](Color c, PieceType pt) {
         return attackedBy[c][pt] | (pos.piece_drops() && pos.count_in_hand(c, pt) > 0 ? pos.drop_region(c, pt) & ~pos.pieces() : Bitboard(0));
     };
     for (PieceSet ps = pos.piece_types(); ps;)
@@ -1209,7 +1211,11 @@ namespace {
         {
             int wins = popcount(ctfTargets & ctfPieces);
             if (wins)
-                score += make_score(4000, 4000) * wins / (wins + dist * dist);
+            {
+                // Avoid overflow of the score halves for many wins
+                int bonus = 4000 * wins / (wins + dist * dist);
+                score += make_score(bonus, bonus);
+            }
             Bitboard current = ctfPieces & ~ctfTargets;
             processed |= ctfPieces;
             ctfPieces = onHold & ~processed;
@@ -1525,7 +1531,7 @@ namespace {
         return abs(mg_value(score) + eg_value(score)) / 2 > lazyThreshold + pos.non_pawn_material() / 64;
     };
 
-    if (lazy_skip(LazyThreshold1) && Options["UCI_Variant"] == "chess")
+    if (lazy_skip(LazyThreshold1) && Eval::isChessVariant)
         goto make_v;
 
     // Main evaluation begins here
@@ -1557,7 +1563,7 @@ namespace {
             + passed< WHITE>() - passed< BLACK>()
             + variant<WHITE>() - variant<BLACK>();
 
-    if (lazy_skip(LazyThreshold2) && Options["UCI_Variant"] == "chess")
+    if (lazy_skip(LazyThreshold2) && Eval::isChessVariant)
         goto make_v;
 
     score +=  threats<WHITE>() - threats<BLACK>()
